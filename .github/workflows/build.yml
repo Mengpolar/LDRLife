@@ -22,7 +22,16 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee /tmp/gradle-ci.log || true
+          grep -q "BUILD SUCCESSFUL" /tmp/gradle-ci.log || { tail -120 /tmp/gradle-ci.log; exit 1; }
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/gradle-ci.log
 
       - name: Compute SHA-256
         run: |
