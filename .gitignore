@@ -5,6 +5,7 @@ app/local.properties
 app/*.jks
 app/*.keystore
 app/keystore.properties
+app/secrets.properties
 app/.idea/
 app/captures/
 app/*.hprof

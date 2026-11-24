@@ -29,7 +29,16 @@
 
 ### 客户端
 
-用 Android Studio 打开 `app/`（或根目录），同步后直接运行 `app` 模块。
+```bash
+# 1. 配置打包信息（服务器地址 + 门禁密钥，构建时加密打包进 APK）
+cp app/secrets.properties.example app/secrets.properties   # 填入真实值
+# 不创建此文件则构建出"手动配置"版本（首次启动需填写服务器）
+
+# 2. 构建
+./gradlew :app:assembleDebug     # 或用 Android Studio 打开根目录直接运行
+```
+
+App 启动后自动解密内置配置并连接服务器，**用户无需输入任何服务器信息**；配置页仅在"无打包配置的构建"中出现。
 
 ### 服务器（Python3 / FastAPI）
 

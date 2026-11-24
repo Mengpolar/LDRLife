@@ -1,6 +1,6 @@
 # LDRLife 异地恋生活 App —— 调研与设计方案（Android · 决策版）
 
-> 版本：v0.8 ｜ 日期：2026-11-25 ｜ **M0 已完成并通过跨端联调**：Python 服务器测试 7/7；Android APK 真机（MuMu 15）安装运行；配对→审批→密钥交换→加密消息 全链路跑通（Kotlin 与 Python 两套独立实现加密互操作验证 ✓）
+> 版本：v0.9 ｜ 日期：2026-11-25 ｜ **M0 已完成并通过跨端联调**（含零配置启动改造回归）：Python 服务器测试 7/7；Android APK 真机（MuMu 15）安装运行；配对→审批→密钥交换→加密消息 全链路跑通（Kotlin 与 Python 两套独立实现加密互操作验证 ✓）
 > 关键决策已确认（见 §14）：**开源 AGPL-3.0（github.com/Mengpolar/LDRLife，Public）、应用名「倾卿」、Kotlin + Compose 原生开发、双安卓、自有服务器部署于 /opt/LDRLife（共存红线）、接口门禁防扫描、TLS 走子域名 relay.p01arbear.top + Let's Encrypt**。
 > 服务器 IP/凭据**不写入任何入库文件**，仅部署会话使用。关键待拍板项已全部清零。
 
@@ -425,6 +425,13 @@ deploy/*.local.*                .env*           !.env.example
 ```
 
 - 入库的是模板：`config.example.toml`（无真实值）；真实 `config.toml`、服务器 IP、门禁密钥、签名密钥全部只在本地持有。
+
+### 10.1.1 配置打包与零配置启动（已实现）
+
+- 构建时从 **`app/secrets.properties`**（gitignored，模板 `secrets.properties.example` 入库）读取服务器地址与门禁密钥，**AES-GCM 加密后打包进 BuildConfig**（密钥拆成两个异或半片分散存放）；App 启动自动解密并连接服务器，**用户零配置**。
+- 诚实安全边界：打包在公开 APK 内的配置属**混淆级保护**（防扫描脚本/字符串 grep，不防有意逆向）。真正的安全层是：端到端加密 + 配对审批 + 安全码比对 + 服务器限流；门禁若泄露，服务器换 gate 并发新版即可。
+- **裸构建回退**：无 secrets 文件构建（如公开仓库直接 CI）→ 三项为空 → App 显示手动配置页（自托管友好）；手动配置优先级高于打包配置。
+- 真实生产值（relay 子域名 + 生产 gate）在部署阶段写入构建机的 secrets.properties 或 CI Secrets。
 
 ### 10.2 权限清单
 

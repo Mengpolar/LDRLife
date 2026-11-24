@@ -115,6 +115,9 @@ fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onSetti
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
+            if (error != null && phase == Phase.UNCONFIGURED) {
+                TextButton(onClick = { session.retryRegister() }) { Text("重试连接") }
+            }
         }
     }
 

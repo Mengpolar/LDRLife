@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.mengpolar.ldrlife.core.B64
 import com.mengpolar.ldrlife.core.Crypto
+import com.mengpolar.ldrlife.core.EmbeddedConfigLoader
 import com.mengpolar.ldrlife.core.KeystoreBox
 import com.mengpolar.ldrlife.core.Identity
 import com.mengpolar.ldrlife.core.IdentityManager
@@ -75,6 +76,9 @@ class Session(private val context: Context, private val prefs: SharedPreferences
 
     val identity: Identity = IdentityManager.loadOrCreate(prefs)
 
+    /** 构建时打包的加密配置：非空则 App 自动连接服务器，用户零配置 */
+    val embeddedConfig = EmbeddedConfigLoader.load()
+
     private val json = Json { ignoreUnknownKeys = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -122,6 +126,14 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     }
 
     private fun cfgProvider(): ServerConfig? {
+        // 手动配置（兜底路径）优先；否则使用打包的加密配置
+        if (prefs.getBoolean("manual_config", false)) {
+            val url = prefs.getString("server_url", null) ?: return null
+            val gate = prefs.getString("gate", null) ?: return null
+            if (url.isNotBlank() && gate.isNotBlank()) return ServerConfig(url, gate)
+            return null
+        }
+        embeddedConfig?.let { return ServerConfig(it.url, it.gate) }
         val url = prefs.getString("server_url", null) ?: return null
         val gate = prefs.getString("gate", null) ?: return null
         if (url.isBlank() || gate.isBlank()) return null
@@ -129,6 +141,10 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     }
 
     fun serverConfig(): ServerConfig? = cfgProvider()
+
+    fun retryRegister() {
+        if (cfgProvider() != null && _phase.value == Phase.UNCONFIGURED) register()
+    }
 
     // ---------- 启动与注册 ----------
 
@@ -160,8 +176,13 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         }
     }
 
+    /** 仅兜底路径（无打包配置的构建）使用：手动填写服务器并记住为手动模式 */
     fun saveServer(url: String, gate: String) {
-        prefs.edit().putString("server_url", url.trim()).putString("gate", gate.trim()).apply()
+        prefs.edit()
+            .putString("server_url", url.trim())
+            .putString("gate", gate.trim())
+            .putBoolean("manual_config", true)
+            .apply()
         register()
     }
 

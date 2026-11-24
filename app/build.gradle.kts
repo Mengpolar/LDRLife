@@ -1,3 +1,9 @@
+import java.security.SecureRandom
+import java.util.Properties
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,6 +11,54 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
 }
+
+// ---------- 构建时注入加密配置（服务器地址 + 门禁密钥） ----------
+// 真实值来自 app/secrets.properties（gitignored，模板见 secrets.properties.example）；
+// 以 AES-GCM 加密后打包进 BuildConfig，运行时解密，App 自动连接服务器。
+// 无 secrets 文件时（如公开仓库裸构建），三项为空 → App 回退到手动配置页。
+
+fun hexToBytes(hex: String): ByteArray =
+    ByteArray(hex.length / 2) { i -> ((Character.digit(hex[i * 2], 16) shl 4) + Character.digit(hex[i * 2 + 1], 16)).toByte() }
+
+fun bytesToHex(b: ByteArray): String = b.joinToString("") { "%02x".format(it) }
+
+fun encryptConfig(json: String, keyHex: String): String {
+    val key = hexToBytes(keyHex)
+    val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+    val c = Cipher.getInstance("AES/GCM/NoPadding")
+    c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+    val ct = c.doFinal(json.toByteArray(Charsets.UTF_8))
+    return bytesToHex(iv + ct)
+}
+
+fun keyHalves(keyHex: String): Pair<String, String> {
+    // 密钥拆成两个异或半片打包，避免完整密钥以字符串形式出现在产物中（混淆级保护）
+    val key = hexToBytes(keyHex)
+    val mask = ByteArray(32).also { SecureRandom().nextBytes(it) }
+    val other = ByteArray(32) { i -> (key[i].toInt() xor mask[i].toInt()).toByte() }
+    return bytesToHex(mask) to bytesToHex(other)
+}
+
+val secretsFile = file("secrets.properties")
+val secretsProps = if (secretsFile.exists()) Properties().apply {
+    secretsFile.inputStream().use { load(it) }
+} else null
+
+val ldrServerUrl = secretsProps?.getProperty("ldr.serverUrl")?.trim() ?: ""
+val ldrGate = secretsProps?.getProperty("ldr.gate")?.trim() ?: ""
+val ldrEncKey = secretsProps?.getProperty("ldr.encKey")?.trim() ?: ""
+
+val ldrHasSecrets = ldrServerUrl.isNotBlank() && ldrGate.isNotBlank() && ldrEncKey.length == 64
+
+if (secretsProps != null && !ldrHasSecrets) {
+    throw GradleException("secrets.properties 存在但字段不完整：ldr.serverUrl / ldr.gate 必填，ldr.encKey 必须为 64 位 hex")
+}
+
+val ldrCfgEnc: String = if (ldrHasSecrets) encryptConfig("{\"url\":\"$ldrServerUrl\",\"gate\":\"$ldrGate\"}", ldrEncKey) else ""
+// keyHalves 必须只调用一次：两次调用会生成两个不同掩码，导致运行时异或还原失败
+val ldrHalves: Pair<String, String> = if (ldrHasSecrets) keyHalves(ldrEncKey) else ("" to "")
+val ldrKeyA: String = ldrHalves.first
+val ldrKeyB: String = ldrHalves.second
 
 android {
     namespace = "com.mengpolar.ldrlife"
@@ -16,6 +70,10 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+
+        buildConfigField("String", "LDR_CONFIG_ENC", "\"$ldrCfgEnc\"")
+        buildConfigField("String", "LDR_KEY_A", "\"$ldrKeyA\"")
+        buildConfigField("String", "LDR_KEY_B", "\"$ldrKeyB\"")
     }
 
     buildTypes {
@@ -34,6 +92,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

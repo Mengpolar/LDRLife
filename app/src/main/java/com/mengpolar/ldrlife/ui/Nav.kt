@@ -19,7 +19,8 @@ fun AppRoot(session: Session) {
     val phase = session.phase.collectAsState().value
     NavHost(
         navController = nav,
-        startDestination = if (phase == Phase.UNCONFIGURED) "setup" else "home",
+        // 有打包配置的构建：永远自动连接，注册失败也在首页提示；仅"裸构建"才出现手动配置页
+        startDestination = if (phase == Phase.UNCONFIGURED && session.embeddedConfig == null) "setup" else "home",
     ) {
         composable("setup") {
             SetupScreen(session, onDone = {
