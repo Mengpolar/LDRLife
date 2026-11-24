@@ -20,7 +20,9 @@ jobs:
           java-version: "17"
 
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
 
       - name: Compute SHA-256
         run: |
