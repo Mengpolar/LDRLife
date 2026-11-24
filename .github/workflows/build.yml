@@ -19,19 +19,40 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /tmp/sdk-licenses.log 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-35" "build-tools;34.0.0" "platform-tools" > /tmp/sdk-install.log 2>&1 || true
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
           ./gradlew :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee /tmp/gradle-ci.log || true
-          grep -q "BUILD SUCCESSFUL" /tmp/gradle-ci.log || { tail -120 /tmp/gradle-ci.log; exit 1; }
+          grep -q "BUILD SUCCESSFUL" /tmp/gradle-ci.log || { tail -150 /tmp/gradle-ci.log > /tmp/fail-tail.log; exit 1; }
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: /tmp/gradle-ci.log
+          path: |
+            /tmp/gradle-ci.log
+            /tmp/sdk-licenses.log
+            /tmp/sdk-install.log
+            /tmp/fail-tail.log
+            build.log
+
+      - name: Dump failure to step summary
+        if: failure()
+        run: |
+          echo "### gradle log tail" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          tail -80 /tmp/gradle-ci.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "### sdk install log" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          tail -20 /tmp/sdk-install.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Compute SHA-256
         run: |
