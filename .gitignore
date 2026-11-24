@@ -1,0 +1,39 @@
+# ---- 客户端（/app）----
+app/build/
+app/.gradle/
+app/local.properties
+app/*.jks
+app/*.keystore
+app/keystore.properties
+app/.idea/
+app/captures/
+app/*.hprof
+
+# ---- 服务端（/server）----
+server/config.toml
+server/data/
+server/logs/
+server/*.db
+server/server
+server/server.exe
+server/.venv/
+server/**/__pycache__/
+server/.pytest_cache/
+
+# ---- 部署与密钥 ----
+deploy/*.local.*
+.env
+.env.*
+!.env.example
+local.properties
+
+# ---- 通用 ----
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.gradle/
+build/
+.kotlin/
+.idea/
+*.iml

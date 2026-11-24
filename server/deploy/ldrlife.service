@@ -1,0 +1,17 @@
+[Unit]
+Description=LDRLife relay server (Python3/FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/LDRLife
+ExecStart=/opt/LDRLife/venv/bin/python /opt/LDRLife/main.py -c /opt/LDRLife/config.toml
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

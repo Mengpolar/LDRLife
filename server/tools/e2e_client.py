@@ -1,0 +1,234 @@
+"""E2E 联调测试客户端：模拟设备 B，与模拟器里的 App（设备 A）完成配对并发送加密消息。
+
+用法：
+    python tools/e2e_client.py --server http://127.0.0.1:9443 \
+        --gate testgate0123456789abcdef --code 8900353 --text "你好，我是B" --timeout 180
+
+流程：注册 → 输码申请 → （等待 A 端审批）→ 收 pair_approved → 交换临时公钥 →
+三重 DH 派生会话密钥 → 发送 E2E 加密消息。
+"""
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import sys
+import time
+import uuid as uuidlib
+
+import httpx
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import auth  # 复用服务器的规范串/校验实现，保证两端一致
+
+
+def b64e(b: bytes) -> str:
+    return base64.b64encode(b).decode()
+
+
+def b64d(s: str) -> bytes:
+    return base64.b64decode(s)
+
+
+def lexcmp(a: bytes, b: bytes) -> int:
+    return -1 if a < b else (1 if a > b else 0)
+
+
+class ClientB:
+    def __init__(self, server: str, gate: str):
+        self.gate = gate
+        self.base = server.rstrip("/") + "/" + gate
+        self.http = httpx.Client(timeout=10, trust_env=False)  # 直连，不走系统代理
+
+        self.uuid = str(uuidlib.uuid4())
+        self.epriv = Ed25519PrivateKey.generate()
+        self.ePub = b64e(self.epriv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
+        self.xpriv = X25519PrivateKey.generate()
+        self.xPub = b64e(self.xpriv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
+
+        self.partner = None          # (uuid, xPub_bytes, ePub_bytes)
+        self.eph_priv = None
+        self.eph_pub_b64 = None
+        self.peer_eph = None
+        self.keys = None             # (send_key, send_prefix, recv_key, recv_prefix)
+        self.send_seq = 0
+        self.ready = False
+        self.sent_text = None
+
+    def sign(self, msg: str) -> str:
+        return b64e(self.epriv.sign(msg.encode("utf-8")))
+
+    def auth_headers(self, method: str, path: str) -> dict:
+        ts = int(time.time())
+        return {"x-ldr-ts": str(ts), "x-ldr-sig": self.sign(auth.canon_auth(self.uuid, method, path, ts))}
+
+    def register(self):
+        # 注册码与 App 同规则：由 uuid 确定性派生（保证重复测试互不冲突）
+        digest = hashlib.sha256((self.uuid + "LDRLIFE-PAIR-V1").encode()).digest()
+        six = f"{int.from_bytes(digest[:8], 'big') % 1_000_000:06d}"
+        body_code = auth.luhn_check_digit(six)
+        sig = self.sign(auth.canon_register(self.uuid, body_code, self.xPub, self.ePub))
+        r = self.http.post(f"{self.base}/v1/register", json={
+            "uuid": self.uuid, "code": body_code, "x25519": self.xPub,
+            "ed25519": self.ePub, "sig": sig,
+        })
+        r.raise_for_status()
+        print("[B] 注册成功 uuid=", self.uuid[:8])
+
+    def pair_request(self, code: str):
+        sig = self.sign(auth.canon_pairreq(code, self.uuid, self.xPub, self.ePub))
+        r = self.http.post(f"{self.base}/v1/pair/request", json={
+            "code": code, "from_uuid": self.uuid, "x25519": self.xPub,
+            "ed25519": self.ePub, "sig": sig,
+        })
+        if r.status_code != 202:
+            raise RuntimeError(f"pair request failed: {r.status_code} {r.text}")
+        print("[B] 已向配对码", code, "发起申请 request_id=", r.json()["id"])
+
+    def pending(self):
+        r = self.http.get(f"{self.base}/v1/envelope/pending", params={"uuid": self.uuid},
+                          headers=self.auth_headers("GET", "/v1/envelope/pending"))
+        r.raise_for_status()
+        return r.json()["envelopes"]
+
+    def ack(self, ids):
+        self.http.post(f"{self.base}/v1/envelope/ack", json={"uuid": self.uuid, "ids": ids},
+                       headers=self.auth_headers("POST", "/v1/envelope/ack"))
+
+    def send_pair_eph(self):
+        eph = X25519PrivateKey.generate()
+        self.eph_priv = eph
+        self.eph_pub_b64 = b64e(eph.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
+        sig = self.sign(auth.canon_pair_eph(self.uuid, self.eph_pub_b64))
+        inner = json.dumps({"t": "pair_eph", "eph": self.eph_pub_b64, "sig": sig}, ensure_ascii=False)
+        r = self.http.post(f"{self.base}/v1/envelope", json={
+            "from": self.uuid, "to": self.partner["uuid"], "type_hint": "pair", "seq": 0,
+            "ct": b64e(inner.encode("utf-8")),
+        }, headers=self.auth_headers("POST", "/v1/envelope"))
+        print("[B] 已发送临时公钥（pair_eph）", r.status_code)
+
+    def handle_envelope(self, e):
+        hint = e.get("type_hint")
+        raw = b64d(e["ct"])
+        if hint == "pair":
+            o = json.loads(raw.decode("utf-8"))
+            if o.get("t") == "pair_approved":
+                self.partner = {
+                    "uuid": o["peer_uuid"],
+                    "xPubB64": o["peer_x25519"],
+                    "ePubB64": o["peer_ed25519"],
+                    "xPubBytes": b64d(o["peer_x25519"]),
+                    "ePubBytes": b64d(o["peer_ed25519"]),
+                }
+                print("[B] 对方已同意绑定，对方设备 =", o["peer_uuid"][:8])
+                if self.eph_priv is None:
+                    self.send_pair_eph()
+            elif o.get("t") == "pair_eph":
+                if self.partner is None or e["from"] != self.partner["uuid"]:
+                    return
+                ok = auth.verify_sig(self.partner["ePubB64"],
+                                     auth.canon_pair_eph(self.partner["uuid"], o["eph"]), o["sig"])
+                if not ok:
+                    print("[B] pair_eph 签名校验失败")
+                    return
+                self.peer_eph = b64d(o["eph"])
+                self.try_derive()
+        elif hint == "msg":
+            print("[B] 收到加密消息（本测试只验证 B→A 方向）")
+
+    def try_derive(self):
+        if self.partner is None or self.eph_priv is None or self.peer_eph is None:
+            return
+        mine = b64d(self.xPub)
+        theirs = self.partner["xPubBytes"]
+        is_a = lexcmp(mine, theirs) <= 0
+        peer_eph_pub = X25519PublicKey.from_public_bytes(self.peer_eph)
+        peer_id_pub = X25519PublicKey.from_public_bytes(theirs)
+        my_id_pub = X25519PublicKey.from_public_bytes(mine)
+        s1 = self.eph_priv.exchange(peer_eph_pub)
+        if is_a:
+            s2 = self.xpriv.exchange(peer_eph_pub)
+            s3 = self.eph_priv.exchange(peer_id_pub)
+        else:
+            s2 = self.eph_priv.exchange(peer_id_pub)
+            s3 = self.xpriv.exchange(peer_eph_pub)
+        shared = s1 + s2 + s3
+        sorted_pubs = (mine + theirs) if is_a else (theirs + mine)
+        okm = HKDF(algorithm=hashes.SHA256(), length=72, salt=b"\x00" * 32,
+                   info=sorted_pubs).derive(shared)
+        k_a2b, k_b2a = okm[0:32], okm[32:64]
+        pref_a, pref_b = okm[64:68], okm[68:72]
+        if is_a:
+            self.keys = (k_a2b, pref_a, k_b2a, pref_b)
+        else:
+            self.keys = (k_b2a, pref_b, k_a2b, pref_a)
+        self.ready = True
+        print("[B] 会话密钥派生成功，E2E 就绪 (isA=", is_a, ")")
+
+    def send_message(self, text: str):
+        send_key, send_prefix, _, _ = self.keys
+        self.send_seq += 1
+        seq = self.send_seq
+        inner = json.dumps({"t": "msg", "body": text, "ts": int(time.time() * 1000)}, ensure_ascii=False)
+        aead = ChaCha20Poly1305(send_key)
+        nonce = send_prefix + seq.to_bytes(8, "big")
+        aad = auth.CANON.encode() + f"|msg|{self.uuid}|{self.partner['uuid']}|{seq}".encode()
+        ct = aead.encrypt(nonce, inner.encode("utf-8"), aad)
+        wire = b64e(nonce + ct)
+        r = self.http.post(f"{self.base}/v1/envelope", json={
+            "from": self.uuid, "to": self.partner["uuid"], "type_hint": "msg", "seq": seq, "ct": wire,
+        }, headers=self.auth_headers("POST", "/v1/envelope"))
+        if r.status_code == 200:
+            self.sent_text = text
+            print("[B] 加密消息已发送 seq=", seq)
+        else:
+            print("[B] 消息发送失败:", r.status_code, r.text)
+
+    def run(self, code: str, text: str, timeout: int):
+        self.register()
+        self.pair_request(code)
+        deadline = time.time() + timeout
+        acked = []
+        while time.time() < deadline:
+            try:
+                envs = self.pending()
+                for e in envs:
+                    self.handle_envelope(e)
+                    acked.append(e["id"])
+                if acked:
+                    self.ack(acked)
+                    acked = []
+                if self.ready and self.sent_text is None:
+                    time.sleep(1)  # 给 A 端一点时间完成派生
+                    self.send_message(text)
+                    break
+            except Exception as ex:
+                print("[B] 轮询异常:", ex)
+            time.sleep(1)
+        if self.sent_text is None:
+            print("[B] 超时：未完成 E2E 发送")
+            sys.exit(1)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--server", default="http://127.0.0.1:9443")
+    ap.add_argument("--gate", required=True)
+    ap.add_argument("--code", required=True)
+    ap.add_argument("--text", default="你好，我是测试端B 💞")
+    ap.add_argument("--timeout", type=int, default=180)
+    args = ap.parse_args()
+
+    c = ClientB(args.server, args.gate)
+    c.run(args.code, args.text, args.timeout)
+
+
+if __name__ == "__main__":
+    main()

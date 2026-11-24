@@ -1,0 +1,31 @@
+# LDRLife 中继服务器配置模板
+# 复制为 config.toml 后按需修改；config.toml 不入库（见 .gitignore）。
+
+# 监听端口。必须选用一个未被服务器上其他服务占用的高位端口（部署前先 ss -tlnp 盘点）。
+port = "9443"
+
+# 部署级门禁密钥（必填，>=16 位随机串）。
+# 所有接口必须以 /{gate}/v1/... 前缀访问，未携带一律 404。
+# 生成示例：openssl rand -hex 16
+gate = ""
+
+# SQLite 数据库路径（相对路径基于工作目录 /opt/LDRLife）。
+db_path = "data/ldrlife.db"
+
+# TLS 证书（Let's Encrypt DNS-01 签发，acme.sh 自动续期）。
+# 留空则以纯 HTTP 运行（仅限本地开发/测试）。
+tls_cert = ""
+tls_key = ""
+
+# 是否记录请求日志（仅记录方法/路径/来源 IP/uuid 前缀，绝不记录信封内容）。
+log_requests = false
+
+# ---- 防扫描与限流 ----
+# 单 IP 每分钟 404 上限（超阈值临时封禁）。
+max_404_per_min = 60
+# 封禁时长（分钟）。
+block_minutes = 10
+# 单个配对码每天可被查询/申请的次数上限。
+code_daily_limit = 20
+# 单个密文信封最大字节数。
+max_ct_bytes = 262144
