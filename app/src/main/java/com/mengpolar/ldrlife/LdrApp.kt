@@ -1,11 +1,15 @@
 package com.mengpolar.ldrlife
 
 import android.app.Application
+import com.mengpolar.ldrlife.core.Updater
 import com.mengpolar.ldrlife.session.Session
 
 class LdrApp : Application(), android.app.Application.ActivityLifecycleCallbacks {
 
     lateinit var session: Session
+        private set
+
+    lateinit var updater: Updater
         private set
 
     /** 前台状态：收到"想你了"时前台直接播放振动，后台走通知 */
@@ -17,6 +21,7 @@ class LdrApp : Application(), android.app.Application.ActivityLifecycleCallbacks
     override fun onCreate() {
         super.onCreate()
         registerActivityLifecycleCallbacks(this)
+        updater = Updater(this)
         session = Session(this, getSharedPreferences("ldr", MODE_PRIVATE))
         session.bootstrap()
     }

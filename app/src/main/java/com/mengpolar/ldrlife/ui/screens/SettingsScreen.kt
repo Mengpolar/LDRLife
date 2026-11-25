@@ -32,7 +32,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mengpolar.ldrlife.BuildConfig
+import com.mengpolar.ldrlife.core.Updater
 import com.mengpolar.ldrlife.session.Session
+import com.mengpolar.ldrlife.ui.components.rememberUpdater
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,6 +131,35 @@ fun SettingsScreen(session: Session, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            HorizontalDivider()
+            Text("版本更新", style = MaterialTheme.typography.titleMedium)
+            val updater = rememberUpdater()
+            val updState = updater.state.collectAsState().value
+            Text("当前版本 v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
+            when (val s = updState) {
+                is Updater.State.Idle, is Updater.State.UpToDate ->
+                    Button(onClick = { updater.checkNow() }) { Text("检查更新") }
+                is Updater.State.Checking ->
+                    Text("正在检查…", style = MaterialTheme.typography.bodyMedium)
+                is Updater.State.Failed -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        s.message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = { updater.checkNow() }) { Text("重试") }
+                }
+                is Updater.State.Available -> TextButton(
+                    onClick = { updater.dialogVisible.value = true }
+                ) { Text("发现新版本 v${s.info.versionName} · 查看") }
+                is Updater.State.Downloading -> Text(
+                    "正在下载 v${s.info.versionName}（${s.progress}%）",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                is Updater.State.Ready -> TextButton(
+                    onClick = { updater.dialogVisible.value = true }
+                ) { Text("v${s.info.versionName} 已就绪 · 去安装") }
+            }
             HorizontalDivider()
             Button(
                 onClick = { confirm = true },

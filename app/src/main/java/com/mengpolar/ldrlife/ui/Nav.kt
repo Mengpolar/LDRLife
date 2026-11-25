@@ -7,6 +7,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.mengpolar.ldrlife.session.Phase
 import com.mengpolar.ldrlife.session.Session
+import com.mengpolar.ldrlife.ui.components.UpdateDialog
+import com.mengpolar.ldrlife.ui.components.rememberUpdater
 import com.mengpolar.ldrlife.ui.screens.ChatScreen
 import com.mengpolar.ldrlife.ui.screens.HapticScreen
 import com.mengpolar.ldrlife.ui.screens.HomeScreen
@@ -45,4 +47,7 @@ fun AppRoot(session: Session) {
         composable("haptic") { HapticScreen(session, onBack = { nav.popBackStack() }) }
         composable("settings") { SettingsScreen(session, onBack = { nav.popBackStack() }) }
     }
+
+    // 应用内更新对话框（全局唯一实例；首页横幅 / 设置页入口共用）
+    UpdateDialog(rememberUpdater())
 }

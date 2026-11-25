@@ -43,6 +43,8 @@ import com.mengpolar.ldrlife.session.Session
 import com.mengpolar.ldrlife.ui.components.IncomingCard
 import com.mengpolar.ldrlife.ui.components.QrImage
 import com.mengpolar.ldrlife.ui.components.StatusChip
+import com.mengpolar.ldrlife.ui.components.UpdateBanner
+import com.mengpolar.ldrlife.ui.components.rememberUpdater
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,6 +87,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             StatusChip(online = conn == ConnState.ONLINE)
+            UpdateBanner(rememberUpdater())
             lastHaptic?.let { h ->
                 Surface(
                     shape = RoundedCornerShape(14.dp),

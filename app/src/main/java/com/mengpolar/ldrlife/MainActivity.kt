@@ -36,6 +36,8 @@ class MainActivity : ComponentActivity() {
         }
         // 前台服务：保持 WS 长连接（START_STICKY 被杀自动拉起）
         ContextCompat.startForegroundService(this, Intent(this, WsService::class.java))
+        // 应用内更新：启动静默检查（24h 节流）；有新版本 → 通知 + 首页横幅
+        (application as LdrApp).updater.autoCheck()
 
         setContent {
             LDRLifeTheme {

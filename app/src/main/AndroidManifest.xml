@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- 引导用户加入电池优化白名单（自用分发，无商店政策约束） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 应用内更新：下载 Release 包后拉起系统安装器（自用分发，无商店） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".LdrApp"
@@ -43,6 +45,17 @@
             android:name=".service.WsService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- 应用内更新：向系统安装器提供下载的 APK -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.mengpolar.ldrlife.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>
