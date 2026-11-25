@@ -38,3 +38,9 @@ build/
 .kotlin/
 .idea/
 *.iml
+
+# 签名密钥库（绝不入库）
+ldrlife.keystore
+ldrlife-ci.keystore
+app/ldrlife-ci.keystore
+KEYSTORE_B64.txt

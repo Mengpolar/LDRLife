@@ -34,6 +34,8 @@ jobs:
           LDR_GATE: ${{ secrets.LDR_GATE }}
           LDR_ENC_KEY: ${{ secrets.LDR_ENC_KEY }}
           LDR_AMAP_KEY: ${{ secrets.LDR_AMAP_KEY }}
+          LDRLIFE_KEYSTORE_B64: ${{ secrets.LDRLIFE_KEYSTORE_B64 }}
+          LDRLIFE_KEYSTORE_PASS: ${{ secrets.LDRLIFE_KEYSTORE_PASS }}
         run: |
           if [ -n "$LDR_SERVER_URL" ] && [ -n "$LDR_GATE" ] && [ -n "$LDR_ENC_KEY" ]; then
             {
@@ -41,7 +43,14 @@ jobs:
               echo "ldr.gate=$LDR_GATE"
               echo "ldr.encKey=$LDR_ENC_KEY"
               echo "ldr.amapKey=$LDR_AMAP_KEY"
+              echo "ldr.keystoreFile=ldrlife-ci.keystore"
+              echo "ldr.keystorePass=$LDRLIFE_KEYSTORE_PASS"
+              echo "ldr.keystoreAlias=ldrlife"
             } > app/secrets.properties
+            if [ -n "$LDRLIFE_KEYSTORE_B64" ]; then
+              echo "$LDRLIFE_KEYSTORE_B64" | base64 -d > ldrlife-ci.keystore
+              echo "签名密钥库已解码 ✓"
+            fi
             echo "secrets.properties injected OK"
           else
             echo "GitHub Secrets not fully configured -> manual-setup fallback build"
