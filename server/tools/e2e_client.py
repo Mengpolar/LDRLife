@@ -45,7 +45,8 @@ class ClientB:
     def __init__(self, server: str, gate: str):
         self.gate = gate
         self.base = server.rstrip("/") + "/" + gate
-        self.http = httpx.Client(timeout=10, trust_env=False)  # 直连，不走系统代理
+        # verify=False：服务器为自签 TLS（App 端通过内嵌证书锁定信任；测试端跳过校验）
+        self.http = httpx.Client(timeout=10, trust_env=False, verify=False)  # 直连，不走系统代理
 
         self.uuid = str(uuidlib.uuid4())
         self.epriv = Ed25519PrivateKey.generate()

@@ -210,7 +210,7 @@ sequenceDiagram
 
 ### 6.1 地图 SDK
 
-- **高德 Android 原生 SDK**（官方持续维护，Kotlin 原生路线直接依赖，无插件停更问题），全链路 **GCJ-02 坐标**，测距无需坐标系转换。
+- **高德 Android 原生 SDK**（官方持续维护，Kotlin 原生路线直接依赖，无插件停更问题），全链路 **GCJ-02 坐标**，测距无需坐标系转换。**10.x 强制隐私合规**：必须先调 `MapsInitializer.updatePrivacyShow(ctx,true,true)` + `updatePrivacyAgree(ctx,true)`，否则地图引擎拒绝工作（errorCode 555570 → 瓦片白屏、marker 不渲染）——已在 LdrApp 启动时调用（2026-11-26 MuMu 实测定位白屏根因）。
 - 保留一层薄 `MapEngine` 接口（显示 / fitBounds / marker / 缩放）：当前无成本，未来若做 iOS 可复用业务代码。
 
 ### 6.2 精度分级（"大致位置"的产品化）

@@ -655,7 +655,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     }
 
     /** 单次定位 → WGS→GCJ → 精度处理 → E2E loc 信封发送 */
-    fun sendMyLocation(precision: Geo.Precision = Geo.Precision.FUZZY) {
+    fun sendMyLocation(precision: Geo.Precision = Geo.Precision.FUZZY, quiet: Boolean = false) {
         val p = _partner.value ?: return
         val a = api ?: return
         scope.launch {
@@ -680,8 +680,19 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                     }
                 }
             }
-            if (!got) _error.value = "定位失败：设备无可用定位源"
+            if (!got && !quiet) _error.value = "定位失败：设备无可用定位源"
         }
+    }
+
+    private var _lastLocShare = 0L
+
+    /** 后台周期位置（WsService 每 60s 调用，内部 10 分钟节流；失败静默不打扰首页） */
+    fun maybeRefreshLocation() {
+        if (_phase.value != Phase.PAIRED) return
+        val now = System.currentTimeMillis()
+        if (now - _lastLocShare < 10 * 60 * 1000L) return
+        _lastLocShare = now
+        sendMyLocation(currentPrecision(), quiet = true)
     }
 
     private fun handleLocEnvelope(from: String, seq: Long, ct: String): Long? {

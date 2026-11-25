@@ -77,23 +77,36 @@ object DbFactory {
 
     fun create(context: Context, prefs: SharedPreferences): AppDb {
         System.loadLibrary("sqlcipher")
-        val passphrase = dbPassphrase(prefs)
+        val passphrase = dbPassphrase(context, prefs)
         return Room.databaseBuilder(context, AppDb::class.java, "ldr.db")
             .openHelperFactory(SupportOpenHelperFactory(passphrase))
             .fallbackToDestructiveMigration()
             .build()
     }
 
-    private fun dbPassphrase(prefs: SharedPreferences): ByteArray {
+    private fun dbPassphrase(context: Context, prefs: SharedPreferences): ByteArray {
         val stored = prefs.getString("db_key_wrapped", null)
         if (stored != null) {
             return try {
                 KeystoreBox.unwrap(stored)
             } catch (_: Exception) {
+                // Keystore 密钥丢失（系统重置/ROM 异常等）：旧库已无法解密，
+                // 必须先删除库文件再生成新密钥，否则打开即 "file is not a database" 崩溃
+                deleteDbFiles(context)
                 regenerate(prefs)
             }
         }
         return regenerate(prefs)
+    }
+
+    private fun deleteDbFiles(context: Context) {
+        val db = context.getDatabasePath("ldr.db")
+        listOf(
+            db,
+            java.io.File(db.parentFile, "ldr.db-wal"),
+            java.io.File(db.parentFile, "ldr.db-shm"),
+            java.io.File(db.parentFile, "ldr.db-journal"),
+        ).forEach { it.delete() }
     }
 
     private fun regenerate(prefs: SharedPreferences): ByteArray {

@@ -1,6 +1,7 @@
 package com.mengpolar.ldrlife
 
 import android.app.Application
+import com.amap.api.maps.MapsInitializer
 import com.mengpolar.ldrlife.core.Updater
 import com.mengpolar.ldrlife.session.Session
 
@@ -21,6 +22,11 @@ class LdrApp : Application(), android.app.Application.ActivityLifecycleCallbacks
     override fun onCreate() {
         super.onCreate()
         registerActivityLifecycleCallbacks(this)
+        // 高德 SDK 10.x 强制隐私合规接口：不调用则地图引擎拒绝工作（errorCode 555570，白屏）
+        runCatching {
+            MapsInitializer.updatePrivacyShow(this, true, true)
+            MapsInitializer.updatePrivacyAgree(this, true)
+        }
         updater = Updater(this)
         session = Session(this, getSharedPreferences("ldr", MODE_PRIVATE))
         session.bootstrap()

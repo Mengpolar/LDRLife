@@ -106,10 +106,25 @@ object Vibe {
         return VibrationEffect.createWaveform(timings.toLongArray(), amps.toIntArray(), -1)
     }
 
-    /** 前台/任意时刻直接播放完整图案（API 26+） */
+    /** 无幅度控制的设备：纯开/关节奏（首个 timing 视为间隔），部分国产 ROM 幅度波形会静默无效 */
+    private fun toWaveformOnOff(p: Pattern): VibrationEffect {
+        val t = mutableListOf<Long>()
+        var lastEnd = 0L
+        p.events.forEach { e ->
+            if (e.at > lastEnd) t.add(e.at - lastEnd)
+            t.add(e.dur)
+            lastEnd = e.at + e.dur
+        }
+        return VibrationEffect.createWaveform(t.toLongArray(), -1)
+    }
+
+    /** 前台/任意时刻直接播放完整图案（API 26+；不支持幅度控制的设备回退经典波形） */
     fun play(ctx: Context, p: Pattern) {
         try {
-            vibrator(ctx).vibrate(toWaveform(p))
+            val v = vibrator(ctx)
+            val effect =
+                if (v.hasAmplitudeControl()) toWaveform(p) else toWaveformOnOff(p)
+            v.vibrate(effect)
         } catch (_: Exception) {
         }
     }
