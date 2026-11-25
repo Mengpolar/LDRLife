@@ -68,39 +68,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 - <<'PYEOF'
-          import base64, json, os, urllib.request
-          repo = "Mengpolar/LDRLife"
-          token = os.environ["GITHUB_TOKEN"]
-          branch = "ci-logs"
-          path = "ci-failure-last.log"
-          hdr = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "User-Agent": "ldrlife-ci"}
-          def api(url, data=None, method="GET"):
-              req = urllib.request.Request(url, data=data, method=method, headers=hdr)
-              return json.load(urllib.request.urlopen(req, timeout=30))
-          main_sha = api(f"https://api.github.com/repos/{repo}/git/ref/heads/main")["object"]["sha"]
-          try:
-              api(f"https://api.github.com/repos/{repo}/git/ref/heads/{branch}")
-          except Exception:
-              api(f"https://api.github.com/repos/{repo}/git/refs",
-                  data=json.dumps({"ref": f"refs/heads/{branch}", "sha": main_sha}).encode(), method="POST")
-          log_content = open("/tmp/fail-tail.log", "rb").read() if os.path.exists("/tmp/fail-tail.log") else b"no fail-tail"
-          full = open("/tmp/gradle-ci.log", "rb").read() if os.path.exists("/tmp/gradle-ci.log") else log_content
-          payload = ("=== fail-tail ===\n" + log_content.decode("utf-8", "replace") +
-                     "\n\n=== full gradle log ===\n" + full.decode("utf-8", "replace"))
-          sha = None
-          try:
-              sha = api(f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}")["sha"]
-          except Exception:
-              pass
-          body = json.dumps({
-              "message": f"ci failure log ({os.environ.get('RUNNER_OS','?')})",
-              "content": base64.b64encode(payload.encode("utf-8")).decode(),
-              "branch": branch,
-              **({"sha": sha} if sha else {}),
-          }).encode()
-          print(api(f"https://api.github.com/repos/{repo}/contents/{path}", data=body, method="PUT")["commit"]["sha"])
-          PYEOF
+          set +e
+          git config user.email "ci@ldrlife.local"
+          git config user.name "ci-bot"
+          git fetch origin ci-logs 2>/dev/null
+          git checkout ci-logs 2>/dev/null || git checkout -b ci-logs
+          {
+            echo "=== fail-tail (build step 末尾 150 行) ==="
+            cat /tmp/fail-tail.log 2>/dev/null || echo "(fail-tail 缺失)"
+            echo
+            echo "=== gradle 日志全文 ==="
+            cat /tmp/gradle-ci.log 2>/dev/null || echo "(gradle-ci.log 缺失)"
+            echo
+            echo "=== runner 信息 ==="
+            echo "os=$RUNNER_OS runner=$RUNNER_NAME java=$JAVA_HOME"
+          } > ci-failure-last.log
+          git add ci-failure-last.log
+          git commit -m "ci failure log $(date -u +%Y%m%d-%H%M%S)" || echo "COMMIT_SKIPPED(无变化?)"
+          git push https://x-access-token:${GITHUB_TOKEN}@github.com/Mengpolar/LDRLife.git ci-logs || echo "!!! LOG_PUSH_FAILED —— 大概率是 Actions 工作流权限仍为只读"
+          echo "PUSH_STEP_DONE"
 
       - name: Compute SHA-256
         run: |
