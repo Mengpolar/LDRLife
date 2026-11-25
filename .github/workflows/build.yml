@@ -8,9 +8,6 @@ on:
 permissions:
   contents: write
 
-permissions:
-  contents: write
-
 jobs:
   build:
     strategy:
@@ -37,56 +34,7 @@ jobs:
             yes | "$SDKM" --licenses > /dev/null 2>&1 || true
             "$SDKM" --install "platforms;android-35" "build-tools;34.0.0" > /dev/null 2>&1 || true
           fi
-          ./gradlew :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee /tmp/gradle-ci.log || true
-          grep -q "BUILD SUCCESSFUL" /tmp/gradle-ci.log || { tail -150 /tmp/gradle-ci.log > /tmp/fail-tail.log; exit 1; }
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-${{ runner.os }}
-          path: |
-            /tmp/gradle-ci.log
-            /tmp/fail-tail.log
-            build.log
-
-      - name: Dump failure to step summary
-        if: failure()
-        run: |
-          echo "### gradle log tail" >> "$GITHUB_STEP_SUMMARY"
-          echo '```text' >> "$GITHUB_STEP_SUMMARY"
-          tail -80 /tmp/gradle-ci.log >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "### sdk install log" >> "$GITHUB_STEP_SUMMARY"
-          echo '```text' >> "$GITHUB_STEP_SUMMARY"
-          tail -20 /tmp/sdk-install.log >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      # 失败时把日志推到 ci-logs 分支（公开仓库 -> 任何人可匿名读取，便于远程排障）
-      - name: Push failure log to ci-logs branch
-        if: failure()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set +e
-          git config user.email "ci@ldrlife.local"
-          git config user.name "ci-bot"
-          git fetch origin ci-logs 2>/dev/null
-          git checkout ci-logs 2>/dev/null || git checkout -b ci-logs
-          {
-            echo "=== fail-tail (build step 末尾 150 行) ==="
-            cat /tmp/fail-tail.log 2>/dev/null || echo "(fail-tail 缺失)"
-            echo
-            echo "=== gradle 日志全文 ==="
-            cat /tmp/gradle-ci.log 2>/dev/null || echo "(gradle-ci.log 缺失)"
-            echo
-            echo "=== runner 信息 ==="
-            echo "os=$RUNNER_OS runner=$RUNNER_NAME java=$JAVA_HOME"
-          } > ci-failure-last.log
-          git add ci-failure-last.log
-          git commit -m "ci failure log $(date -u +%Y%m%d-%H%M%S)" || echo "COMMIT_SKIPPED(无变化?)"
-          git push https://x-access-token:${GITHUB_TOKEN}@github.com/Mengpolar/LDRLife.git ci-logs || echo "!!! LOG_PUSH_FAILED —— 大概率是 Actions 工作流权限仍为只读"
-          echo "PUSH_STEP_DONE"
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
       - name: Compute SHA-256
         run: |
@@ -97,7 +45,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LDRLife-debug-apk
+          name: LDRLife-debug-apk-${{ runner.os }}
           path: |
             LDRLife-debug.apk
             LDRLife-debug.apk.sha256
@@ -107,8 +55,8 @@ jobs:
         if: success() && runner.os == 'Windows' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0
-          name: v0.1.0
+          tag_name: v0.0.1
+          name: v0.0.1
           make_latest: true
           files: |
             LDRLife-debug.apk

@@ -69,7 +69,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.0.1"
 
         buildConfigField("String", "LDR_CONFIG_ENC", "\"$ldrCfgEnc\"")
         buildConfigField("String", "LDR_KEY_A", "\"$ldrKeyA\"")
