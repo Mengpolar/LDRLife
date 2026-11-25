@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -18,6 +19,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -43,13 +45,14 @@ import com.mengpolar.ldrlife.ui.components.StatusChip
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onSettings: () -> Unit) {
+fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onMap: () -> Unit, onSettings: () -> Unit) {
     val phase = session.phase.collectAsState().value
     val partner = session.partner.collectAsState().value
     val conn = session.conn.collectAsState().value
     val incoming = session.incoming.collectAsState().value
     val waiting = session.waiting.collectAsState().value
     val error = session.error.collectAsState().value
+    val partnerLoc = session.partnerLoc.collectAsState().value
     val clipboard = LocalClipboardManager.current
     var showQr by remember { mutableStateOf(false) }
 
@@ -111,6 +114,26 @@ fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onSetti
             } else {
                 Text("已与对方绑定 💞", style = MaterialTheme.typography.headlineSmall)
                 Button(onClick = onChat, modifier = Modifier.fillMaxWidth()) { Text("进入私聊") }
+                Button(onClick = onMap, modifier = Modifier.fillMaxWidth()) { Text("共享位置") }
+                partnerLoc?.let { pl ->
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text(
+                                "TA 的位置（${pl.precisionLabel}）",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Text(
+                                freshnessOf(pl.ts),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
@@ -135,5 +158,14 @@ fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onSetti
             },
             confirmButton = { TextButton(onClick = { showQr = false }) { Text("关闭") } },
         )
+    }
+}
+
+private fun freshnessOf(ts: Long): String {
+    val mins = (System.currentTimeMillis() - ts) / 60000
+    return when {
+        mins < 1 -> "刚刚更新"
+        mins < 60 -> "$mins 分钟前更新"
+        else -> "${mins / 60} 小时前更新"
     }
 }

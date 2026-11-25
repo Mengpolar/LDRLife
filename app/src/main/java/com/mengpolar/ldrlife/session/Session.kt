@@ -5,9 +5,11 @@ import android.content.SharedPreferences
 import com.mengpolar.ldrlife.core.B64
 import com.mengpolar.ldrlife.core.Crypto
 import com.mengpolar.ldrlife.core.EmbeddedConfigLoader
+import com.mengpolar.ldrlife.core.Geo
 import com.mengpolar.ldrlife.core.KeystoreBox
 import com.mengpolar.ldrlife.core.Identity
 import com.mengpolar.ldrlife.core.IdentityManager
+import com.mengpolar.ldrlife.core.LocationProvider
 import com.mengpolar.ldrlife.core.PairCode
 import com.mengpolar.ldrlife.data.AppDb
 import com.mengpolar.ldrlife.data.DbFactory
@@ -30,11 +32,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.double
 import kotlinx.serialization.json.long
 import org.bouncycastle.crypto.generators.X25519KeyPairGenerator
 import org.bouncycastle.crypto.params.X25519KeyGenerationParameters
@@ -63,6 +67,14 @@ data class SessionKeysData(
     val recvPrefix: String,
     val sendCounter: Long,
     val recvCounter: Long,
+)
+
+@Serializable
+data class PartnerLoc(
+    val lat: Double,
+    val lon: Double,
+    @SerialName("precisionLabel") val precisionLabel: String,
+    val ts: Long,
 )
 
 data class IncomingRequest(
@@ -113,6 +125,12 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
+    private val _partnerLoc = MutableStateFlow<PartnerLoc?>(null)
+    val partnerLoc: StateFlow<PartnerLoc?> = _partnerLoc.asStateFlow()
+
+    private val _myLoc = MutableStateFlow<PartnerLoc?>(null)
+    val myLoc: StateFlow<PartnerLoc?> = _myLoc.asStateFlow()
+
     private var api: Api? = null
     private var ws: WsClient? = null
     private var db: AppDb? = null
@@ -158,6 +176,12 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     // ---------- 启动与注册 ----------
 
     fun bootstrap() {
+        try {
+            prefs.getString("partner_loc", null)?.let {
+                _partnerLoc.value = json.decodeFromString(PartnerLoc.serializer(), it)
+            }
+        } catch (_: Exception) {
+        }
         try {
             prefs.getString("partner_wrapped", null)?.let { blob ->
                 _partner.value = json.decodeFromString(
@@ -386,6 +410,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
             "pair" -> { handlePairEnvelope(from, ct); null }
             "msg" -> handleMsgEnvelope(from, seq, ct)
             "read" -> handleReadEnvelope(from, seq, ct)
+            "loc" -> handleLocEnvelope(from, seq, ct)
             else -> null
         }
         if (hint == "msg" && handled != null) sendReceipt("delivered", listOf(handled))
@@ -599,6 +624,73 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                 ).apply()
             } catch (_: Exception) {
             }
+        }
+    }
+
+    // ---------- 位置共享（M2） ----------
+
+    fun currentPrecision(): Geo.Precision =
+        Geo.fromLabel(prefs.getString("loc_precision", null) ?: Geo.Precision.FUZZY.label)
+
+    fun setPrecision(label: String) {
+        prefs.edit().putString("loc_precision", label).apply()
+        sendMyLocation(Geo.fromLabel(label))
+    }
+
+    /** 单次定位 → WGS→GCJ → 精度处理 → E2E loc 信封发送 */
+    fun sendMyLocation(precision: Geo.Precision = Geo.Precision.FUZZY) {
+        val p = _partner.value ?: return
+        val a = api ?: return
+        scope.launch {
+            val got = LocationProvider.requestSingleFix(context) { lat, lon ->
+                scope.launch {
+                    try {
+                        val (gLat, gLon) = Geo.wgs84ToGcj02(lat, lon)
+                        val (sLat, sLon) = Geo.applyPrecision(gLat, gLon, precision)
+                        val k = keys ?: return@launch
+                        val seq = k.sendCounter + 1
+                        val ts = System.currentTimeMillis()
+                        val inner = "{\"t\":\"loc\",\"lat\":$sLat,\"lon\":$sLon,\"precision\":\"${precision.label}\",\"ts\":$ts}"
+                        val wire = Crypto.sealWire(
+                            B64.dec(k.send), B64.dec(k.sendPrefix), seq,
+                            Crypto.canonMsgAad(identity.uuid, p.uuid, seq),
+                            inner.toByteArray(Charsets.UTF_8),
+                        )
+                        a.envelopePost(p.uuid, "loc", seq, wire)
+                        updateCounters(send = seq)
+                        _myLoc.value = PartnerLoc(sLat, sLon, precision.label, ts)
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+            if (!got) _error.value = "定位失败：设备无可用定位源"
+        }
+    }
+
+    private fun handleLocEnvelope(from: String, seq: Long, ct: String): Long? {
+        val p = _partner.value ?: return null
+        val k = keys ?: return null
+        if (from != p.uuid) return null
+        return try {
+            val pt = Crypto.openWire(B64.dec(k.recv), ct, seq, Crypto.canonMsgAad(p.uuid, identity.uuid, seq))
+            val o = json.parseToJsonElement(String(pt, Charsets.UTF_8)).jsonObject
+            if (o["t"]?.jsonPrimitive?.contentOrNull == "loc") {
+                val pl = PartnerLoc(
+                    lat = o["lat"]!!.jsonPrimitive.double,
+                    lon = o["lon"]!!.jsonPrimitive.double,
+                    precisionLabel = o["precision"]?.jsonPrimitive?.contentOrNull ?: Geo.Precision.FUZZY.label,
+                    ts = o["ts"]?.jsonPrimitive?.long ?: System.currentTimeMillis(),
+                )
+                _partnerLoc.value = pl
+                try {
+                    prefs.edit().putString("partner_loc", json.encodeToString(PartnerLoc.serializer(), pl)).apply()
+                } catch (_: Exception) {
+                }
+            }
+            updateCounters(recv = seq)
+            seq
+        } catch (_: Exception) {
+            null
         }
     }
 

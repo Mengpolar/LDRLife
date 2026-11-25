@@ -9,6 +9,7 @@ import com.mengpolar.ldrlife.session.Phase
 import com.mengpolar.ldrlife.session.Session
 import com.mengpolar.ldrlife.ui.screens.ChatScreen
 import com.mengpolar.ldrlife.ui.screens.HomeScreen
+import com.mengpolar.ldrlife.ui.screens.MapScreen
 import com.mengpolar.ldrlife.ui.screens.PairScreen
 import com.mengpolar.ldrlife.ui.screens.SettingsScreen
 import com.mengpolar.ldrlife.ui.screens.SetupScreen
@@ -32,11 +33,13 @@ fun AppRoot(session: Session) {
                 session,
                 onPair = { nav.navigate("pair") },
                 onChat = { nav.navigate("chat") },
+                onMap = { nav.navigate("map") },
                 onSettings = { nav.navigate("settings") },
             )
         }
         composable("pair") { PairScreen(session, onBack = { nav.popBackStack() }) }
         composable("chat") { ChatScreen(session, onBack = { nav.popBackStack() }) }
+        composable("map") { MapScreen(session, onBack = { nav.popBackStack() }) }
         composable("settings") { SettingsScreen(session, onBack = { nav.popBackStack() }) }
     }
 }

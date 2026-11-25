@@ -61,6 +61,9 @@ class ClientB:
         self.send_seq = 0
         self.ready = False
         self.sent_text = None
+        self.mock_lat = None
+        self.mock_lon = None
+        self.loc_count = 0
         self.unread = []             # 收到但未回执的消息 seq
         self.read_later = []         # (due_ts, seq) 延迟回"已读"
 
@@ -176,6 +179,24 @@ class ClientB:
         aead = ChaCha20Poly1305(recv_key)
         return aead.decrypt(data[:12], data[12:], aad)
 
+    def send_loc(self):
+        """模拟 M2：以固定坐标发位置 E2E 信封（B 发给 A）"""
+        send_key, send_prefix, _, _ = self.keys
+        self.send_seq += 1
+        seq = self.send_seq
+        inner = json.dumps({"t": "loc", "lat": self.mock_lat, "lon": self.mock_lon,
+                            "precision": "模糊 ±1.1km", "ts": int(time.time() * 1000)}, ensure_ascii=False)
+        aead = ChaCha20Poly1305(send_key)
+        nonce = send_prefix + seq.to_bytes(8, "big")
+        aad = auth.CANON.encode() + f"|msg|{self.uuid}|{self.partner['uuid']}|{seq}".encode()
+        ct = aead.encrypt(nonce, inner.encode("utf-8"), aad)
+        wire = b64e(nonce + ct)
+        r = self.http.post(f"{self.base}/v1/envelope", json={
+            "from": self.uuid, "to": self.partner["uuid"], "type_hint": "loc", "seq": seq, "ct": wire,
+        }, headers=self.auth_headers("POST", "/v1/envelope"))
+        self.loc_count += 1
+        print(f"[B] 位置信封已发送 #{self.loc_count} seq={seq} ({r.status_code})")
+
     def send_receipt(self, kind: str, seqs):
         send_key, send_prefix, _, _ = self.keys
         self.send_seq += 1
@@ -252,7 +273,8 @@ class ClientB:
         else:
             print("[B] 消息发送失败:", r.status_code, r.text)
 
-    def run(self, code: str, text: str, timeout: int):
+    def run(self, code: str, text: str, timeout: int, lat: float, lon: float):
+        self.mock_lat, self.mock_lon = lat, lon
         self.register()
         self.pair_request(code)
         deadline = time.time() + timeout
@@ -272,6 +294,9 @@ class ClientB:
                     time.sleep(1)
                     self.send_message(text)
                     text_sent = True
+                if self.ready and text_sent and self.loc_count < 3 and time.time() >= getattr(self, "next_loc", 0):
+                    self.send_loc()
+                    self.next_loc = time.time() + 10
             except Exception as ex:
                 print("[B] 轮询异常:", ex)
             time.sleep(1)
@@ -287,11 +312,13 @@ def main():
     ap.add_argument("--gate", required=True)
     ap.add_argument("--code", required=True)
     ap.add_argument("--text", default="你好，我是测试端B 💞")
+    ap.add_argument("--lat", type=float, default=31.2304)
+    ap.add_argument("--lon", type=float, default=121.4737)
     ap.add_argument("--timeout", type=int, default=180)
     args = ap.parse_args()
 
     c = ClientB(args.server, args.gate)
-    c.run(args.code, args.text, args.timeout)
+    c.run(args.code, args.text, args.timeout, args.lat, args.lon)
 
 
 if __name__ == "__main__":

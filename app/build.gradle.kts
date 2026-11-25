@@ -47,6 +47,7 @@ val secretsProps = if (secretsFile.exists()) Properties().apply {
 val ldrServerUrl = secretsProps?.getProperty("ldr.serverUrl")?.trim() ?: ""
 val ldrGate = secretsProps?.getProperty("ldr.gate")?.trim() ?: ""
 val ldrEncKey = secretsProps?.getProperty("ldr.encKey")?.trim() ?: ""
+val ldrAmapKey = secretsProps?.getProperty("ldr.amapKey")?.trim() ?: ""
 
 val ldrHasSecrets = ldrServerUrl.isNotBlank() && ldrGate.isNotBlank() && ldrEncKey.length == 64
 
@@ -74,6 +75,7 @@ android {
         buildConfigField("String", "LDR_CONFIG_ENC", "\"$ldrCfgEnc\"")
         buildConfigField("String", "LDR_KEY_A", "\"$ldrKeyA\"")
         buildConfigField("String", "LDR_KEY_B", "\"$ldrKeyB\"")
+        manifestPlaceholders["amapKey"] = ldrAmapKey
     }
 
     buildTypes {
@@ -126,4 +128,6 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     // 配对码二维码
     implementation("com.google.zxing:core:3.5.3")
+    // 高德 3D 地图（M2 位置共享；API Key 经 secrets.properties 注入 manifest）
+    implementation("com.amap.api:3dmap:10.0.600")
 }
