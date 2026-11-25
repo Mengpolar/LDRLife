@@ -26,6 +26,27 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # 从 GitHub Secrets 恢复 secrets.properties（不入库的构建密钥）
+      # 四项齐全时：APK 自动内嵌服务器配置（零配置启动）；缺项则走手动配置兜底
+      - name: Restore build secrets
+        env:
+          LDR_SERVER_URL: ${{ secrets.LDR_SERVER_URL }}
+          LDR_GATE: ${{ secrets.LDR_GATE }}
+          LDR_ENC_KEY: ${{ secrets.LDR_ENC_KEY }}
+          LDR_AMAP_KEY: ${{ secrets.LDR_AMAP_KEY }}
+        run: |
+          if [ -n "$LDR_SERVER_URL" ] && [ -n "$LDR_GATE" ] && [ -n "$LDR_ENC_KEY" ]; then
+            {
+              echo "ldr.serverUrl=$LDR_SERVER_URL"
+              echo "ldr.gate=$LDR_GATE"
+              echo "ldr.encKey=$LDR_ENC_KEY"
+              echo "ldr.amapKey=$LDR_AMAP_KEY"
+            } > app/secrets.properties
+            echo "secrets.properties injected OK"
+          else
+            echo "GitHub Secrets not fully configured -> manual-setup fallback build"
+          fi
+
       - name: Build debug APK
         run: |
           chmod +x gradlew || true
