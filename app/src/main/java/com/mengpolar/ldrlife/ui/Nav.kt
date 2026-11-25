@@ -8,6 +8,7 @@ import androidx.navigation.compose.rememberNavController
 import com.mengpolar.ldrlife.session.Phase
 import com.mengpolar.ldrlife.session.Session
 import com.mengpolar.ldrlife.ui.screens.ChatScreen
+import com.mengpolar.ldrlife.ui.screens.HapticScreen
 import com.mengpolar.ldrlife.ui.screens.HomeScreen
 import com.mengpolar.ldrlife.ui.screens.MapScreen
 import com.mengpolar.ldrlife.ui.screens.PairScreen
@@ -34,12 +35,14 @@ fun AppRoot(session: Session) {
                 onPair = { nav.navigate("pair") },
                 onChat = { nav.navigate("chat") },
                 onMap = { nav.navigate("map") },
+                onHaptic = { nav.navigate("haptic") },
                 onSettings = { nav.navigate("settings") },
             )
         }
         composable("pair") { PairScreen(session, onBack = { nav.popBackStack() }) }
         composable("chat") { ChatScreen(session, onBack = { nav.popBackStack() }) }
         composable("map") { MapScreen(session, onBack = { nav.popBackStack() }) }
+        composable("haptic") { HapticScreen(session, onBack = { nav.popBackStack() }) }
         composable("settings") { SettingsScreen(session, onBack = { nav.popBackStack() }) }
     }
 }

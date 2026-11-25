@@ -36,6 +36,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mengpolar.ldrlife.core.PairCode
+import com.mengpolar.ldrlife.core.Vibe
 import com.mengpolar.ldrlife.session.ConnState
 import com.mengpolar.ldrlife.session.Phase
 import com.mengpolar.ldrlife.session.Session
@@ -45,7 +46,14 @@ import com.mengpolar.ldrlife.ui.components.StatusChip
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onMap: () -> Unit, onSettings: () -> Unit) {
+fun HomeScreen(
+    session: Session,
+    onPair: () -> Unit,
+    onChat: () -> Unit,
+    onMap: () -> Unit,
+    onHaptic: () -> Unit,
+    onSettings: () -> Unit,
+) {
     val phase = session.phase.collectAsState().value
     val partner = session.partner.collectAsState().value
     val conn = session.conn.collectAsState().value
@@ -53,7 +61,10 @@ fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onMap: 
     val waiting = session.waiting.collectAsState().value
     val error = session.error.collectAsState().value
     val partnerLoc = session.partnerLoc.collectAsState().value
+    val partnerUsage = session.partnerUsage.collectAsState().value
+    val lastHaptic = session.lastHaptic.collectAsState().value
     val clipboard = LocalClipboardManager.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var showQr by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -74,6 +85,25 @@ fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onMap: 
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             StatusChip(online = conn == ConnState.ONLINE)
+            lastHaptic?.let { h ->
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.padding(12.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("TA 想你了 ${h.emoji}", style = MaterialTheme.typography.titleMedium)
+                        TextButton(onClick = {
+                            session.replyHaptic()
+                            Vibe.play(ctx, h)
+                        }) { Text("回一个 ${h.emoji}") }
+                    }
+                }
+            }
             val p = partner
             if (p == null) {
                 Text("我的配对码", style = MaterialTheme.typography.titleMedium)
@@ -115,6 +145,27 @@ fun HomeScreen(session: Session, onPair: () -> Unit, onChat: () -> Unit, onMap: 
                 Text("已与对方绑定 💞", style = MaterialTheme.typography.headlineSmall)
                 Button(onClick = onChat, modifier = Modifier.fillMaxWidth()) { Text("进入私聊") }
                 Button(onClick = onMap, modifier = Modifier.fillMaxWidth()) { Text("共享位置") }
+                Button(
+                    onClick = onHaptic,
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("想你了 💓") }
+                partnerUsage?.let { u ->
+                    val fresh = System.currentTimeMillis() - u.ts < 60 * 60 * 1000
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (fresh) "TA 正在用：${u.app}" else "TA 的状态已过期（未共享）",
+                            modifier = Modifier.padding(10.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
                 partnerLoc?.let { pl ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),

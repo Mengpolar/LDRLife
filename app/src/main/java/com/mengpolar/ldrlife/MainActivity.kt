@@ -17,6 +17,12 @@ class MainActivity : ComponentActivity() {
     private val notifPerm =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 拒绝则收不到提醒，设置页可再开 */ }
 
+    override fun onResume() {
+        super.onResume()
+        // 回前台触发应用状态上报（变化即报 + 5 分钟节流，见 Session.reportUsageIfChanged）
+        (application as LdrApp).session.reportUsageIfChanged()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val session = (application as LdrApp).session

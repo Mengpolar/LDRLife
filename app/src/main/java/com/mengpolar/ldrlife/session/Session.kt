@@ -11,6 +11,8 @@ import com.mengpolar.ldrlife.core.Identity
 import com.mengpolar.ldrlife.core.IdentityManager
 import com.mengpolar.ldrlife.core.LocationProvider
 import com.mengpolar.ldrlife.core.PairCode
+import com.mengpolar.ldrlife.core.Usage
+import com.mengpolar.ldrlife.core.Vibe
 import com.mengpolar.ldrlife.data.AppDb
 import com.mengpolar.ldrlife.data.DbFactory
 import com.mengpolar.ldrlife.data.MSG_DELIVERED
@@ -67,6 +69,12 @@ data class SessionKeysData(
     val recvPrefix: String,
     val sendCounter: Long,
     val recvCounter: Long,
+)
+
+@Serializable
+data class PartnerUsage(
+    val app: String,
+    val ts: Long,
 )
 
 @Serializable
@@ -130,6 +138,13 @@ class Session(private val context: Context, private val prefs: SharedPreferences
 
     private val _myLoc = MutableStateFlow<PartnerLoc?>(null)
     val myLoc: StateFlow<PartnerLoc?> = _myLoc.asStateFlow()
+
+    private val _partnerUsage = MutableStateFlow<PartnerUsage?>(null)
+    val partnerUsage: StateFlow<PartnerUsage?> = _partnerUsage.asStateFlow()
+
+    /** 最近一次收到的"想你了"（UI 提示条 + 回一个） */
+    private val _lastHaptic = MutableStateFlow<Vibe.Pattern?>(null)
+    val lastHaptic: StateFlow<Vibe.Pattern?> = _lastHaptic.asStateFlow()
 
     private var api: Api? = null
     private var ws: WsClient? = null
@@ -411,6 +426,8 @@ class Session(private val context: Context, private val prefs: SharedPreferences
             "msg" -> handleMsgEnvelope(from, seq, ct)
             "read" -> handleReadEnvelope(from, seq, ct)
             "loc" -> handleLocEnvelope(from, seq, ct)
+            "haptic" -> { android.util.Log.d("LDR", "收到 haptic 信封 seq=$seq"); handleHapticEnvelope(from, seq, ct); null }
+            "usage" -> { android.util.Log.d("LDR", "收到 usage 信封 seq=$seq"); handleUsageEnvelope(from, seq, ct) }
             else -> null
         }
         if (hint == "msg" && handled != null) sendReceipt("delivered", listOf(handled))
@@ -694,6 +711,161 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         }
     }
 
+    // ---------- 想你了 / 应用状态（M3） ----------
+
+    /** 发送"想你了"：预设走紧凑 id，自定义（摩斯）走完整 events JSON（设计文档 §8.1） */
+    fun sendHaptic(pattern: Vibe.Pattern) {
+        val p = _partner.value ?: return
+        val k = keys ?: return
+        scope.launch {
+            val seq = k.sendCounter + 1
+            val inner = if (Vibe.byId(pattern.id) != null) {
+                "{\"t\":\"haptic\",\"preset\":\"${pattern.id}\"}"
+            } else {
+                val ev = pattern.events.joinToString(",", "[", "]") { e ->
+                    "{\"at\":${e.at},\"dur\":${e.dur},\"amp\":${e.amp}}"
+                }
+                "{\"t\":\"haptic\",\"events\":$ev,\"name\":\"${pattern.name}\"}"
+            }
+            val wire = Crypto.sealWire(
+                B64.dec(k.send), B64.dec(k.sendPrefix), seq,
+                Crypto.canonMsgAad(identity.uuid, p.uuid, seq),
+                inner.toByteArray(Charsets.UTF_8),
+            )
+            try {
+                api?.envelopePost(p.uuid, "haptic", seq, wire)
+                updateCounters(send = seq)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun handleHapticEnvelope(from: String, seq: Long, ct: String) {
+        val p = _partner.value ?: return
+        val k = keys ?: return
+        if (from != p.uuid) return
+        try {
+            val pt = Crypto.openWire(
+                B64.dec(k.recv), ct, seq,
+                Crypto.canonMsgAad(p.uuid, identity.uuid, seq)
+            )
+            val o = json.parseToJsonElement(String(pt, Charsets.UTF_8)).jsonObject
+            if (o["t"]?.jsonPrimitive?.contentOrNull == "haptic") {
+                val pattern = o["preset"]?.jsonPrimitive?.contentOrNull?.let { Vibe.byId(it) }
+                    ?: o["events"]?.let { evs ->
+                        val arr = evs as? kotlinx.serialization.json.JsonArray ?: return@let null
+                        try {
+                            Vibe.Pattern(
+                                id = "custom",
+                                name = o["name"]?.jsonPrimitive?.contentOrNull ?: "自定义",
+                                emoji = "💓",
+                                events = arr.map { e ->
+                                    val x = e.jsonObject
+                                    Vibe.Event(
+                                        x["at"]!!.jsonPrimitive.long,
+                                        x["dur"]!!.jsonPrimitive.long,
+                                        x["amp"]!!.jsonPrimitive.double,
+                                    )
+                                },
+                                repeat = 1,
+                            )
+                        } catch (_: Exception) {
+                            null
+                        }
+                    } ?: Vibe.HEARTBEAT
+                _lastHaptic.value = pattern
+                val app = context.applicationContext as? com.mengpolar.ldrlife.LdrApp ?: return
+                if (app.isForeground) {
+                    Vibe.play(context, pattern)
+                } else {
+                    Vibe.notifyHaptic(context, pattern.id)
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun replyHaptic() {
+        _lastHaptic.value?.let { sendHaptic(it) }
+    }
+
+    /** 应用状态上报：回前台触发；同应用 5 分钟节流；L0 关闭 / L1 仅在用 / L3 应用名 */
+    fun reportUsageIfChanged() {
+        if (_phase.value != Phase.PAIRED) return
+        val level = prefs.getInt("usage_level", 3)
+        if (level == 0) return
+        val p = _partner.value ?: return
+        val a = api ?: return
+        scope.launch {
+            try {
+                val fg = Usage.currentForegroundApp(context)
+                val name = when {
+                    fg == null -> if (level >= 3) "（未在使用/锁屏）" else "未使用"
+                    level >= 3 -> fg.second
+                    else -> "使用手机中"
+                }
+                val now = System.currentTimeMillis()
+                val last = _lastUsageReport
+                if (last != null && last.first == name && now - last.second < 5 * 60 * 1000) return@launch
+                _lastUsageReport = name to now
+                val k = keys ?: return@launch
+                val seq = k.sendCounter + 1
+                val safeName = name.replace("\\", "\\\\").replace("\"", "\\\"")
+                val inner = "{\"t\":\"usage\",\"app\":\"$safeName\",\"ts\":$now}"
+                val wire = Crypto.sealWire(
+                    B64.dec(k.send), B64.dec(k.sendPrefix), seq,
+                    Crypto.canonMsgAad(identity.uuid, p.uuid, seq),
+                    inner.toByteArray(Charsets.UTF_8),
+                )
+                a.envelopePost(p.uuid, "usage", seq, wire)
+                updateCounters(send = seq)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private var _lastUsageReport: Pair<String, Long>? = null
+
+    private fun handleUsageEnvelope(from: String, seq: Long, ct: String): Long? {
+        val p = _partner.value ?: return null
+        val k = keys ?: return null
+        if (from != p.uuid) return null
+        return try {
+            val pt = Crypto.openWire(B64.dec(k.recv), ct, seq, Crypto.canonMsgAad(p.uuid, identity.uuid, seq))
+            val o = json.parseToJsonElement(String(pt, Charsets.UTF_8)).jsonObject
+            if (o["t"]?.jsonPrimitive?.contentOrNull == "usage") {
+                val u = PartnerUsage(
+                    app = o["app"]?.jsonPrimitive?.contentOrNull ?: "",
+                    ts = o["ts"]?.jsonPrimitive?.long ?: System.currentTimeMillis(),
+                )
+                _partnerUsage.value = u
+                android.util.Log.d("LDR", "usage 处理成功 app=${u.app}")
+                try {
+                    prefs.edit().putString(
+                        "partner_usage",
+                        json.encodeToString(PartnerUsage.serializer(), u)
+                    ).apply()
+                } catch (_: Exception) {
+                }
+            }
+            updateCounters(recv = seq)
+            seq
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun setUsageEnabled(on: Boolean) {
+        prefs.edit().putInt("usage_level", if (on) 3 else 0).apply()
+        if (!on) {
+            _partnerUsage.value = null
+        } else {
+            reportUsageIfChanged()
+        }
+    }
+
+    fun usageEnabled(): Boolean = prefs.getInt("usage_level", 3) != 0
+
     // ---------- 解绑 ----------
 
     fun unpair() {
@@ -715,13 +887,18 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     private fun clearPartnerLocal() {
         _partner.value = null
         _safety.value = null
+        _lastHaptic.value = null
+        _partnerUsage.value = null
+        _partnerLoc.value = null
+        _myLoc.value = null
         keys = null
         _ready.value = false
         _waiting.value = false
         myEphPriv = null
         myEphPub = null
         partnerEph = null
-        prefs.edit().remove("partner_wrapped").remove("session_wrapped").apply()
+        prefs.edit().remove("partner_wrapped").remove("session_wrapped")
+            .remove("partner_loc").remove("partner_usage").apply()
         _phase.value = if (cfgProvider() == null) Phase.UNCONFIGURED else Phase.UNPAIRED
         scope.launch {
             try {

@@ -179,6 +179,38 @@ class ClientB:
         aead = ChaCha20Poly1305(recv_key)
         return aead.decrypt(data[:12], data[12:], aad)
 
+    def send_haptic(self, preset_id: str = 'heartbeat'):
+        """模拟 M3：想你了振动信封（紧凑 preset 形式）"""
+        send_key, send_prefix, _, _ = self.keys
+        self.send_seq += 1
+        seq = self.send_seq
+        inner = json.dumps({"t": "haptic", "preset": preset_id}, ensure_ascii=False)
+        aead = ChaCha20Poly1305(send_key)
+        nonce = send_prefix + seq.to_bytes(8, "big")
+        aad = auth.CANON.encode() + f"|msg|{self.uuid}|{self.partner['uuid']}|{seq}".encode()
+        ct = aead.encrypt(nonce, inner.encode("utf-8"), aad)
+        wire = b64e(nonce + ct)
+        r = self.http.post(f"{self.base}/v1/envelope", json={
+            "from": self.uuid, "to": self.partner["uuid"], "type_hint": "haptic", "seq": seq, "ct": wire,
+        }, headers=self.auth_headers("POST", "/v1/envelope"))
+        print(f"[B] 想你了信封已发送 seq={seq} ({r.status_code})")
+
+    def send_usage(self, app: str = '微信'):
+        """模拟 M3：应用状态信封"""
+        send_key, send_prefix, _, _ = self.keys
+        self.send_seq += 1
+        seq = self.send_seq
+        inner = json.dumps({"t": "usage", "app": app, "ts": int(time.time() * 1000)}, ensure_ascii=False)
+        aead = ChaCha20Poly1305(send_key)
+        nonce = send_prefix + seq.to_bytes(8, "big")
+        aad = auth.CANON.encode() + f"|msg|{self.uuid}|{self.partner['uuid']}|{seq}".encode()
+        ct = aead.encrypt(nonce, inner.encode("utf-8"), aad)
+        wire = b64e(nonce + ct)
+        r = self.http.post(f"{self.base}/v1/envelope", json={
+            "from": self.uuid, "to": self.partner["uuid"], "type_hint": "usage", "seq": seq, "ct": wire,
+        }, headers=self.auth_headers("POST", "/v1/envelope"))
+        print(f"[B] 应用状态信封已发送 ({r.status_code})")
+
     def send_loc(self):
         """模拟 M2：以固定坐标发位置 E2E 信封（B 发给 A）"""
         send_key, send_prefix, _, _ = self.keys
@@ -297,6 +329,10 @@ class ClientB:
                 if self.ready and text_sent and self.loc_count < 3 and time.time() >= getattr(self, "next_loc", 0):
                     self.send_loc()
                     self.next_loc = time.time() + 10
+                if self.ready and text_sent and not getattr(self, "m3_sent", False):
+                    self.send_haptic()
+                    self.send_usage("微信")
+                    self.m3_sent = True
             except Exception as ex:
                 print("[B] 轮询异常:", ex)
             time.sleep(1)

@@ -2,6 +2,7 @@ package com.mengpolar.ldrlife.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,6 +14,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -95,6 +97,38 @@ fun SettingsScreen(session: Session, onBack: () -> Unit) {
             }) {
                 Text("电池优化白名单（提升后台消息即时性）")
             }
+            HorizontalDivider()
+            Text("应用状态共享（M3）", style = MaterialTheme.typography.titleMedium)
+            var usageOn by remember { mutableStateOf(session.usageEnabled()) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = usageOn,
+                    onClick = {
+                        usageOn = true
+                        session.setUsageEnabled(true)
+                    },
+                    label = { Text("共享（应用名+时间）") },
+                )
+                FilterChip(
+                    selected = !usageOn,
+                    onClick = {
+                        usageOn = false
+                        session.setUsageEnabled(false)
+                    },
+                    label = { Text("关闭") },
+                )
+            }
+            if (usageOn && !com.mengpolar.ldrlife.core.Usage.hasPermission(ctx)) {
+                TextButton(onClick = { com.mengpolar.ldrlife.core.Usage.openSettings(ctx) }) {
+                    Text("⚠ 授权“使用情况访问权限”")
+                }
+            }
+            Text(
+                "仅共享当前应用名与时间，不留历史；对方端 1 小时后过期。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            HorizontalDivider()
             Button(
                 onClick = { confirm = true },
                 enabled = partner != null,
