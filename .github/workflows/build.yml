@@ -50,14 +50,11 @@ jobs:
             LDRLife-debug.apk
             LDRLife-debug.apk.sha256
 
-      # 打 tag（v*）或手动触发时，创建 GitHub Release 并附 APK 与校验文件（Windows 通道发布）
+      # 打 tag（v*）时自动创建 GitHub Release 并附 APK 与校验文件（Windows 通道发布）
       - name: Release
-        if: success() && runner.os == 'Windows' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+        if: success() && runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.0.1
-          name: v0.0.1
-          make_latest: true
           files: |
             LDRLife-debug.apk
             LDRLife-debug.apk.sha256
