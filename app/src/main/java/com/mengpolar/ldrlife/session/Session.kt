@@ -646,16 +646,8 @@ class Session(private val context: Context, private val prefs: SharedPreferences
 
     // ---------- 位置共享（M2） ----------
 
-    fun currentPrecision(): Geo.Precision =
-        Geo.fromLabel(prefs.getString("loc_precision", null) ?: Geo.Precision.FUZZY.label)
-
-    fun setPrecision(label: String) {
-        prefs.edit().putString("loc_precision", label).apply()
-        sendMyLocation(Geo.fromLabel(label))
-    }
-
-    /** 单次定位 → WGS→GCJ → 精度处理 → E2E loc 信封发送 */
-    fun sendMyLocation(precision: Geo.Precision = Geo.Precision.FUZZY, quiet: Boolean = false) {
+    /** 单次定位 → WGS→GCJ → 精度处理 → E2E loc 信封发送（默认精确，精度选择已按用户要求移除） */
+    fun sendMyLocation(precision: Geo.Precision = Geo.Precision.EXACT, quiet: Boolean = false) {
         val p = _partner.value ?: return
         val a = api ?: return
         scope.launch {
@@ -692,7 +684,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         val now = System.currentTimeMillis()
         if (now - _lastLocShare < 10 * 60 * 1000L) return
         _lastLocShare = now
-        sendMyLocation(currentPrecision(), quiet = true)
+        sendMyLocation(quiet = true)
     }
 
     private fun handleLocEnvelope(from: String, seq: Long, ct: String): Long? {
@@ -836,6 +828,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                 )
                 a.envelopePost(p.uuid, "usage", seq, wire)
                 updateCounters(send = seq)
+                android.util.Log.d("LDR", "上报使用状态 app=$name")
             } catch (_: Exception) {
             }
         }

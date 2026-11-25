@@ -47,20 +47,41 @@ object Usage {
         pkg
     }
 
-    /** 正在使用：最近 2 分钟最后一个前台事件的应用 → (包名, 展示名)；无/被排除返回 null */
+    /**
+     * 正在使用判定（两级）：
+     * 1) 事件窗口 10 分钟：最后一个 RESUMED 且未被 PAUSED 覆盖的应用；
+     *    （旧版只看 2 分钟窗口——停留在同一 App 超过 2 分钟时窗口内无事件，会误报"未在使用"）
+     * 2) 兜底 queryUsageStats：lastTimeUsed 最新且距今 < 2 分钟的应用。
+     * 返回 (包名, 展示名)；无/被排除返回 null
+     */
     fun currentForegroundApp(ctx: Context): Pair<String, String>? {
         if (!hasPermission(ctx)) return null
         val um = ctx.getSystemService(UsageStatsManager::class.java) ?: return null
         val now = System.currentTimeMillis()
-        val events = um.queryEvents(now - 2 * 60 * 1000, now)
-        var lastPkg: String? = null
-        val e = UsageEvents.Event()
-        while (events.hasNextEvent()) {
-            events.getNextEvent(e)
-            if (e.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) lastPkg = e.packageName
+
+        // 1) 事件流：跟踪最后一个前台事件
+        run {
+            val events = um.queryEvents(now - 10 * 60 * 1000, now)
+            var lastPkg: String? = null
+            var active = false
+            val e = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(e)
+                when (e.eventType) {
+                    UsageEvents.Event.MOVE_TO_FOREGROUND -> { lastPkg = e.packageName; active = true }
+                    UsageEvents.Event.MOVE_TO_BACKGROUND -> active = false
+                }
+            }
+            val pkg = if (active) lastPkg else null
+            if (pkg != null && !excluded(pkg)) return pkg to labelOf(ctx, pkg)
         }
-        val pkg = lastPkg ?: return null
-        if (excluded(pkg)) return null
-        return pkg to labelOf(ctx, pkg)
+
+        // 2) 兜底：停留同一 App 场景（窗口内无事件）看 lastTimeUsed
+        run {
+            val stats = um.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 24 * 3600 * 1000, now)
+            val best = stats.filter { !excluded(it.packageName) }.maxByOrNull { it.lastTimeUsed } ?: return null
+            if (now - best.lastTimeUsed < 2 * 60 * 1000) return best.packageName to labelOf(ctx, best.packageName)
+        }
+        return null
     }
 }

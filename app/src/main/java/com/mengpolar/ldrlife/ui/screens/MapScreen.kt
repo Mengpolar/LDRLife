@@ -55,7 +55,6 @@ fun MapScreen(session: Session, onBack: () -> Unit) {
     var aMap by remember { mutableStateOf<AMap?>(null) }
     val myLoc = session.myLoc.collectAsState().value
     val partnerLoc = session.partnerLoc.collectAsState().value
-    val precision = remember { mutableStateOf(session.currentPrecision()) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -78,7 +77,7 @@ fun MapScreen(session: Session, onBack: () -> Unit) {
     // 打开地图页自动上报一次自己的位置（双方各开一次即互相可见，无需手点按钮；
     // LocationProvider 有 10 分钟缓存，频繁进出不会反复定位）
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        session.sendMyLocation(precision.value)
+        session.sendMyLocation()
     }
 
     // markers + 连线 + 视角自适应（设计文档 §6.4：fitBounds，缩放上限 16）
@@ -147,7 +146,7 @@ fun MapScreen(session: Session, onBack: () -> Unit) {
                         )
                         Text(
                             buildString {
-                                append("我的精度：${precision.value.label}")
+                                append("我的精度：精确 ~100m")
                                 partnerLoc?.let { append(" ｜ TA：${it.precisionLabel} · ${freshness(it.ts)}") }
                             },
                             style = MaterialTheme.typography.labelSmall,
@@ -156,23 +155,8 @@ fun MapScreen(session: Session, onBack: () -> Unit) {
                     }
                 }
             }
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Geo.Precision.entries.forEach { p ->
-                    FilterChip(
-                        selected = precision.value == p,
-                        onClick = {
-                            precision.value = p
-                            session.setPrecision(p.label)
-                        },
-                        label = { Text(p.label) },
-                    )
-                }
-            }
             Button(
-                onClick = { session.sendMyLocation(precision.value) },
+                onClick = { session.sendMyLocation() },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 12.dp),
             ) { Text("刷新我的位置并共享") }
         }

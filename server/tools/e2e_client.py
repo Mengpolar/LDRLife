@@ -42,16 +42,18 @@ def lexcmp(a: bytes, b: bytes) -> int:
 
 
 class ClientB:
-    def __init__(self, server: str, gate: str):
+    def __init__(self, server: str, gate: str, dev: dict | None = None):
         self.gate = gate
         self.base = server.rstrip("/") + "/" + gate
         # verify=False：服务器为自签 TLS（App 端通过内嵌证书锁定信任；测试端跳过校验）
         self.http = httpx.Client(timeout=10, trust_env=False, verify=False)  # 直连，不走系统代理
 
-        self.uuid = str(uuidlib.uuid4())
-        self.epriv = Ed25519PrivateKey.generate()
+        self.uuid = dev["uuid"] if dev else str(uuidlib.uuid4())
+        self.epriv = (Ed25519PrivateKey.from_private_bytes(b64d(dev["epriv"]))
+                      if dev else Ed25519PrivateKey.generate())
         self.ePub = b64e(self.epriv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
-        self.xpriv = X25519PrivateKey.generate()
+        self.xpriv = (X25519PrivateKey.from_private_bytes(b64d(dev["xpriv"]))
+                      if dev else X25519PrivateKey.generate())
         self.xPub = b64e(self.xpriv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
 
         self.partner = None          # dict(uuid/xPubB64/ePubB64/xPubBytes/ePubBytes)
@@ -352,9 +354,29 @@ def main():
     ap.add_argument("--lat", type=float, default=31.2304)
     ap.add_argument("--lon", type=float, default=121.4737)
     ap.add_argument("--timeout", type=int, default=180)
+    # 身份持久化：跨进程重启保持同一设备（已配对的无需重新配对）
+    ap.add_argument("--device-file", default=None,
+                    help="设备身份 JSON 路径（uuid/私钥），复用则不重新配对")
     args = ap.parse_args()
 
-    c = ClientB(args.server, args.gate)
+    import json as _json
+    dev = None
+    if args.device_file and os.path.exists(args.device_file):
+        try:
+            dev = _json.load(open(args.device_file))
+            print(f"[B] 复用设备身份 uuid={dev['uuid'][:8]}（无需重新配对）")
+        except Exception as ex:
+            print("[B] 设备文件读取失败，将重新注册:", ex)
+            dev = None
+
+    c = ClientB(args.server, args.gate, dev)
+    if args.device_file and dev is None:
+        _json.dump({
+            "uuid": c.uuid,
+            "epriv": b64e(c.epriv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())),
+            "xpriv": b64e(c.xpriv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())),
+        }, open(args.device_file, "w"))
+        print(f"[B] 设备身份已保存 -> {args.device_file} uuid={c.uuid[:8]}")
     c.run(args.code, args.text, args.timeout, args.lat, args.lon)
 
 
