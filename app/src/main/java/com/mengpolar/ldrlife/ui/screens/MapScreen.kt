@@ -75,6 +75,12 @@ fun MapScreen(session: Session, onBack: () -> Unit) {
         }
     }
 
+    // 打开地图页自动上报一次自己的位置（双方各开一次即互相可见，无需手点按钮；
+    // LocationProvider 有 10 分钟缓存，频繁进出不会反复定位）
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        session.sendMyLocation(precision.value)
+    }
+
     // markers + 连线 + 视角自适应（设计文档 §6.4：fitBounds，缩放上限 16）
     androidx.compose.runtime.LaunchedEffect(myLoc, partnerLoc, aMap) {
         val a = aMap ?: return@LaunchedEffect

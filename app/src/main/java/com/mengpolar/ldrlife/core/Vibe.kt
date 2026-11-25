@@ -82,8 +82,15 @@ object Vibe {
     // ---------- 播放 ----------
 
     private fun vibrator(ctx: Context): Vibrator =
-        (ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager)
-            .defaultVibrator
+        // API 31+ 用 VibratorManager；鸿蒙 2/3 等旧系统（API 26-30）只有传统 VIBRATOR_SERVICE，
+        // 直接拿 manager 会拿到 null 强转崩溃 → 被 catch 吞掉表现为"永远不振动"
+        if (Build.VERSION.SDK_INT >= 31) {
+            (ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager)
+                .defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
 
     private fun toWaveform(p: Pattern): VibrationEffect {
         val timings = mutableListOf<Long>()

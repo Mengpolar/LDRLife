@@ -49,6 +49,21 @@ val ldrGate = secretsProps?.getProperty("ldr.gate")?.trim() ?: ""
 val ldrEncKey = secretsProps?.getProperty("ldr.encKey")?.trim() ?: ""
 val ldrAmapKey = secretsProps?.getProperty("ldr.amapKey")?.trim() ?: ""
 
+// 签名配置：CI 用稳定密钥库（否则 runner 临时 debug 签名每次不同 → 应用内更新
+// 覆盖安装失败 + 高德 Key 的 SHA1 绑定失效地图白屏）。本地无密钥库时回退默认 debug 签名。
+val ldrKeystoreFile = secretsProps?.getProperty("ldr.keystoreFile")?.trim() ?: ""
+val ldrKeystorePass = secretsProps?.getProperty("ldr.keystorePass")?.trim() ?: ""
+val ldrKeystoreAlias = secretsProps?.getProperty("ldr.keystoreAlias")?.trim() ?: ""
+val ldrKeystore = listOf(file(ldrKeystoreFile), rootProject.file(ldrKeystoreFile))
+    .firstOrNull { ldrKeystoreFile.isNotBlank() && it.exists() }
+val ldrHasSigning = ldrKeystore != null && ldrKeystorePass.isNotBlank() && ldrKeystoreAlias.isNotBlank()
+if (secretsProps != null && ldrKeystoreFile.isNotBlank() && !ldrHasSigning) {
+    throw GradleException("secrets.properties 中的签名密钥库配置不完整或文件不存在：ldr.keystoreFile=$ldrKeystoreFile")
+}
+logger.lifecycle(
+    "LDRLife signing: " + if (ldrHasSigning) "custom keystore ${ldrKeystore!!.name} (stable SHA1)" else "default debug keystore (ephemeral)"
+)
+
 val ldrHasSecrets = ldrServerUrl.isNotBlank() && ldrGate.isNotBlank() && ldrEncKey.length == 64
 
 if (secretsProps != null && !ldrHasSecrets) {
@@ -69,8 +84,8 @@ android {
         applicationId = "com.mengpolar.ldrlife"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.0.4"
+        versionCode = 5
+        versionName = "0.0.5"
 
         buildConfigField("String", "LDR_CONFIG_ENC", "\"$ldrCfgEnc\"")
         buildConfigField("String", "LDR_KEY_A", "\"$ldrKeyA\"")
@@ -78,13 +93,29 @@ android {
         manifestPlaceholders["amapKey"] = ldrAmapKey
     }
 
-    buildTypes {
-        release {
-            // M0 暂不混淆；后续开启时补充 BouncyCastle/SQLCipher keep 规则
-            isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+signingConfigs {
+    if (ldrHasSigning) {
+        create("ldr") {
+            storeFile = ldrKeystore
+            storePassword = ldrKeystorePass
+            keyAlias = ldrKeystoreAlias
+            keyPassword = ldrKeystorePass
         }
     }
+}
+
+buildTypes {
+    debug {
+        // 本地/CI debug 包统一用稳定签名，保证应用内更新可覆盖安装
+        if (ldrHasSigning) signingConfig = signingConfigs.getByName("ldr")
+    }
+    release {
+        // M0 暂不混淆；后续开启时补充 BouncyCastle/SQLCipher keep 规则
+        isMinifyEnabled = false
+        proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        if (ldrHasSigning) signingConfig = signingConfigs.getByName("ldr")
+    }
+}
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

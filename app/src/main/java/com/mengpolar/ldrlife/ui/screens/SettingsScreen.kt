@@ -100,6 +100,28 @@ fun SettingsScreen(session: Session, onBack: () -> Unit) {
             }) {
                 Text("电池优化白名单（提升后台消息即时性）")
             }
+            // 通知权限：未开启时后台收不到"想你了"提醒（部分系统安装后默认关）
+            val notifEnabled = remember {
+                androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+            }
+            if (!notifEnabled) {
+                TextButton(onClick = {
+                    runCatching {
+                        ctx.startActivity(
+                            android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                        )
+                    }
+                }) {
+                    Text("⚠ 通知权限未开启（后台收不到提醒）")
+                }
+            }
+            Text(
+                "华为/鸿蒙：系统设置 → 应用 → 倾卿 → 启动管理，开启「允许自启动/关联启动/后台活动」；" +
+                    "通知保持开启。小米/OPPO/vivo 也有类似「省电策略」，选「无限制」。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             HorizontalDivider()
             Text("应用状态共享（M3）", style = MaterialTheme.typography.titleMedium)
             var usageOn by remember { mutableStateOf(session.usageEnabled()) }

@@ -778,7 +778,13 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                 if (app.isForeground) {
                     Vibe.play(context, pattern)
                 } else {
-                    Vibe.notifyHaptic(context, pattern.id)
+                    val nm = context.getSystemService(android.app.NotificationManager::class.java)
+                    if (nm?.areNotificationsEnabled() == true) {
+                        Vibe.notifyHaptic(context, pattern.id)
+                    } else {
+                        // 通知权限未授予（部分系统安装后默认关）也保证振动触达
+                        Vibe.play(context, pattern)
+                    }
                 }
             }
         } catch (_: Exception) {
