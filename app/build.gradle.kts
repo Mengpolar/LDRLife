@@ -69,8 +69,8 @@ android {
         applicationId = "com.mengpolar.ldrlife"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.0.3"
+        versionCode = 4
+        versionName = "0.0.4"
 
         buildConfigField("String", "LDR_CONFIG_ENC", "\"$ldrCfgEnc\"")
         buildConfigField("String", "LDR_KEY_A", "\"$ldrKeyA\"")
