@@ -1,8 +1,7 @@
 name: Build APK
 
+# 仅手动触发：用户明确要求发新版时才构建发布（workflow_dispatch 可选 tag ref）
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:

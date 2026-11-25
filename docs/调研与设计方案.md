@@ -395,7 +395,7 @@ envelope(id, from, to, type_hint, ct, seq, created_at, expires_at)  -- ACK 即�
 
 - 仓库：**https://github.com/Mengpolar/LDRLife**（Public，已确认），monorepo 结构：`/app` 客户端、`/server` Python 中继、`/docs` 设计文档（去除敏感项后入库）。
 - **许可证：AGPL-3.0**（已拍板，仓库根放 LICENSE 文件；与未来 libsignal 集成兼容）。
-- **分发**：GitHub Releases 提供 APK（GitHub Actions 自动构建 + 输出 SHA-256 校验值）。
+- **分发**：GitHub Releases 提供 APK（GitHub Actions 自动构建 + 输出 SHA-256 校验值）。**发布策略（2026-11-26 用户拍板）：禁止自动构建发布包**——workflow 仅 workflow_dispatch 手动触发，仅在用户明确说发新版时执行（推 tag + 手动 dispatch）。
 - **应用内更新（M4，已实现）**：数据源 = 仓库根 **`latest.json`**（CI 打 tag 时自动提交更新：versionCode/versionName/apkUrl/sha256/notes）。App 读取 raw.githubusercontent + 镜像前缀依次尝试（不走 GitHub API——匿名限流 60/h 曾烧完配额）→ 比对 `versionCode` → 下载 APK（多镜像重试 + 进度通知）→ **SHA-256 校验** → FileProvider 拉起系统安装器（首次引导"安装未知应用"授权）。
 - **更新触发**：启动时静默检查（24h 节流）→ 发现新版本发通知；首页横幅 + 设置页「版本更新」手动检查，均弹出更新对话框（立即更新 / 后台下载 / 立即安装）。
 - **国内加速**：下载与 latest.json 读取均支持**镜像前缀**（gh-proxy.org、ghfast.top，直连兜底），依次尝试直至成功；README 同步提供直链 + 镜像链接。
