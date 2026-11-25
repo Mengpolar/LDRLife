@@ -5,6 +5,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     gate: str
+    host: str = "127.0.0.1"
     port: int = 9443
     db_path: str = "data/ldrlife.db"
     tls_cert: str = ""
