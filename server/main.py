@@ -420,7 +420,7 @@ def main():
     print(f"LDRLife relay listening on :{cfg.port} (gate: {len(cfg.gate)} chars)")
     if not (cfg.tls_cert and cfg.tls_key):
         print("WARNING: TLS 未配置，仅限本地开发/测试")
-    uvicorn.run(app, host="0.0.0.0", port=cfg.port,
+    uvicorn.run(app, host=cfg.host, port=cfg.port,
                 ssl_certfile=cfg.tls_cert or None,
                 ssl_keyfile=cfg.tls_key or None)
 

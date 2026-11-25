@@ -32,6 +32,7 @@ def load_config(path: str) -> Config:
     return Config(
         gate=gate,
         port=int(data.get("port", 9443)),
+        host=data.get("host", "0.0.0.0"),
         db_path=data.get("db_path", "data/ldrlife.db"),
         tls_cert=data.get("tls_cert", ""),
         tls_key=data.get("tls_key", ""),
