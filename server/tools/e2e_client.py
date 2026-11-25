@@ -53,7 +53,7 @@ class ClientB:
         self.xpriv = X25519PrivateKey.generate()
         self.xPub = b64e(self.xpriv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
 
-        self.partner = None          # (uuid, xPub_bytes, ePub_bytes)
+        self.partner = None          # dict(uuid/xPubB64/ePubB64/xPubBytes/ePubBytes)
         self.eph_priv = None
         self.eph_pub_b64 = None
         self.peer_eph = None
@@ -61,6 +61,8 @@ class ClientB:
         self.send_seq = 0
         self.ready = False
         self.sent_text = None
+        self.unread = []             # 收到但未回执的消息 seq
+        self.read_later = []         # (due_ts, seq) 延迟回"已读"
 
     def sign(self, msg: str) -> str:
         return b64e(self.epriv.sign(msg.encode("utf-8")))
@@ -141,7 +143,66 @@ class ClientB:
                 self.peer_eph = b64d(o["eph"])
                 self.try_derive()
         elif hint == "msg":
-            print("[B] 收到加密消息（本测试只验证 B→A 方向）")
+            seq = e.get("seq", 0)
+            if self.keys is None or self.partner is None or e.get("from") != self.partner["uuid"]:
+                return
+            try:
+                sk, sp, rk, rp = self.keys
+                print(f"[B] recv attempt seq={seq} recvKey={rk[:8]} recvPrefix={rp[:8]} aad=LDRLIFE1|msg|{self.partner['uuid']}|{self.uuid}|{seq} ctLen={len(e.get('ct',''))}")
+                pt = self.open_incoming(raw, seq)
+                o = json.loads(pt.decode("utf-8"))
+                if o.get("t") == "msg":
+                    print(f'[B] 收到加密消息 seq={seq}: {o.get("body")}')
+                    self.unread.append(seq)
+            except Exception as ex:
+                dump = (f"[B] 解密失败 type={type(ex).__name__} msg={ex}\n"
+                        f"    raw({len(raw)}B)={raw.hex()}\n"
+                        f"    recvKey={self.keys[2].hex()}\n"
+                        f"    recvPrefix={self.keys[3].hex()}\n"
+                        f"    aad={auth.CANON}|msg|{self.partner['uuid']}|{self.uuid}|{seq}\n"
+                        f"    ct_b64={e.get('ct','')[:120]}")
+                print(dump)
+
+    def open_incoming(self, raw: bytes, seq: int) -> bytes:
+        """解密收到的消息信封（nonce 编码 seq，AAD 绑定双方与序号）"""
+        _, _, recv_key, _ = self.keys  # keys = (send, send_prefix, recv, recv_prefix)
+        data = raw
+        if len(data) < 12 + 16:
+            raise ValueError("ct too short")
+        if int.from_bytes(data[4:12], "big") != seq:
+            raise ValueError("nonce/seq mismatch")
+        aad = auth.CANON.encode() + f"|msg|{self.partner['uuid']}|{self.uuid}|{seq}".encode()
+        print(f"[B] open_incoming 现场: recv_key={recv_key.hex()} nonce={data[:12].hex()} aad={aad.decode()} ct_len={len(data)-12}")
+        aead = ChaCha20Poly1305(recv_key)
+        return aead.decrypt(data[:12], data[12:], aad)
+
+    def send_receipt(self, kind: str, seqs):
+        send_key, send_prefix, _, _ = self.keys
+        self.send_seq += 1
+        seq = self.send_seq
+        inner = json.dumps({"t": kind, "seqs": list(seqs)}, ensure_ascii=False)
+        aead = ChaCha20Poly1305(send_key)
+        nonce = send_prefix + seq.to_bytes(8, "big")
+        aad = auth.CANON.encode() + f"|msg|{self.uuid}|{self.partner['uuid']}|{seq}".encode()
+        ct = aead.encrypt(nonce, inner.encode("utf-8"), aad)
+        wire = b64e(nonce + ct)
+        r = self.http.post(f"{self.base}/v1/envelope", json={
+            "from": self.uuid, "to": self.partner["uuid"], "type_hint": "read", "seq": seq, "ct": wire,
+        }, headers=self.auth_headers("POST", "/v1/envelope"))
+        print(f"[B] 已回传 {kind} 回执 seq={seq} ({r.status_code})")
+
+    def flush_receipts(self):
+        """收到消息后：立即回 delivered；3 秒后回 read"""
+        if self.unread and self.ready:
+            self.send_receipt("delivered", self.unread)
+            now = time.time()
+            for s in self.unread:
+                self.read_later.append((now + 3.0, s))
+            self.unread = []
+        due = [s for (t, s) in self.read_later if time.time() >= t]
+        if due:
+            self.send_receipt("read", due)
+            self.read_later = [x for x in self.read_later if time.time() < x[0]]
 
     def try_derive(self):
         if self.partner is None or self.eph_priv is None or self.peer_eph is None:
@@ -195,6 +256,7 @@ class ClientB:
         self.register()
         self.pair_request(code)
         deadline = time.time() + timeout
+        text_sent = False
         acked = []
         while time.time() < deadline:
             try:
@@ -205,16 +267,18 @@ class ClientB:
                 if acked:
                     self.ack(acked)
                     acked = []
-                if self.ready and self.sent_text is None:
-                    time.sleep(1)  # 给 A 端一点时间完成派生
+                self.flush_receipts()
+                if self.ready and not text_sent:
+                    time.sleep(1)
                     self.send_message(text)
-                    break
+                    text_sent = True
             except Exception as ex:
                 print("[B] 轮询异常:", ex)
             time.sleep(1)
         if self.sent_text is None:
             print("[B] 超时：未完成 E2E 发送")
             sys.exit(1)
+        print("[B] 测试结束")
 
 
 def main():

@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
@@ -51,7 +53,8 @@ fun SettingsScreen(session: Session, onBack: () -> Unit) {
         },
     ) { pad ->
         Column(
-            modifier = Modifier.padding(pad).fillMaxSize().padding(24.dp),
+            modifier = Modifier.padding(pad).fillMaxSize().padding(24.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("安全码", style = MaterialTheme.typography.titleMedium)
@@ -78,6 +81,20 @@ fun SettingsScreen(session: Session, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            TextButton(onClick = {
+                try {
+                    ctx.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            android.net.Uri.parse("package:com.mengpolar.ldrlife")
+                        )
+                    )
+                } catch (_: Exception) {
+                }
+            }) {
+                Text("电池优化白名单（提升后台消息即时性）")
+            }
             Button(
                 onClick = { confirm = true },
                 enabled = partner != null,

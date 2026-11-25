@@ -11,10 +11,14 @@ import com.mengpolar.ldrlife.core.IdentityManager
 import com.mengpolar.ldrlife.core.PairCode
 import com.mengpolar.ldrlife.data.AppDb
 import com.mengpolar.ldrlife.data.DbFactory
+import com.mengpolar.ldrlife.data.MSG_DELIVERED
+import com.mengpolar.ldrlife.data.MSG_EXPIRED
+import com.mengpolar.ldrlife.data.MSG_READ
 import com.mengpolar.ldrlife.data.MSG_SENT
 import com.mengpolar.ldrlife.data.MSG_SENDING
 import com.mengpolar.ldrlife.data.MessageDao
 import com.mengpolar.ldrlife.data.MessageEntity
+import com.mengpolar.ldrlife.data.TTL_MS
 import com.mengpolar.ldrlife.net.Api
 import com.mengpolar.ldrlife.net.ServerConfig
 import com.mengpolar.ldrlife.net.WsClient
@@ -146,6 +150,11 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         if (cfgProvider() != null && _phase.value == Phase.UNCONFIGURED) register()
     }
 
+    /** 前台服务调用：确保 WS 连接存活（幂等） */
+    fun ensureWs() {
+        if (cfgProvider() != null) startWs()
+    }
+
     // ---------- 启动与注册 ----------
 
     fun bootstrap() {
@@ -223,6 +232,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     // ---------- 配对 ----------
 
     fun refreshIncoming() {
+        sweepExpiry()
         val a = api ?: return
         scope.launch {
             try {
@@ -236,18 +246,23 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                         eB64 = obj["ed25519"]!!.jsonPrimitive.content,
                     )
                 }
-                // 兜底拉取暂存信封（WS 断线期间的）
+                // 兜底拉取暂存信封（WS 断线期间的）；同批回传"已送达✓✓"回执
+                val deliveredSeqs = mutableListOf<Long>()
                 val envs = a.envelopePending()
                 for (e in envs) {
                     val obj = e.jsonObject
-                    onEnvelope(
+                    val hint = obj["type_hint"]?.jsonPrimitive?.contentOrNull ?: "msg"
+                    val handledSeq = onEnvelope(
                         obj["id"]!!.jsonPrimitive.long,
                         obj["from"]!!.jsonPrimitive.content,
-                        obj["type_hint"]?.jsonPrimitive?.contentOrNull ?: "msg",
+                        hint,
                         obj["seq"]?.jsonPrimitive?.long ?: 0L,
                         obj["ct"]!!.jsonPrimitive.content,
                     )
+                    if (hint == "msg" && handledSeq != null) deliveredSeqs.add(handledSeq)
                 }
+                if (deliveredSeqs.isNotEmpty()) sendReceipt("delivered", deliveredSeqs)
+                resendPending()
             } catch (_: Exception) {
             }
         }
@@ -366,13 +381,16 @@ class Session(private val context: Context, private val prefs: SharedPreferences
 
     // ---------- 信封处理 ----------
 
-    private fun onEnvelope(id: Long, from: String, hint: String, seq: Long, ct: String) {
-        when (hint) {
-            "pair" -> handlePairEnvelope(from, ct)
+    private fun onEnvelope(id: Long, from: String, hint: String, seq: Long, ct: String): Long? {
+        val handled = when (hint) {
+            "pair" -> { handlePairEnvelope(from, ct); null }
             "msg" -> handleMsgEnvelope(from, seq, ct)
-            else -> { /* read 等 M1 类型 */ }
+            "read" -> handleReadEnvelope(from, seq, ct)
+            else -> null
         }
+        if (hint == "msg" && handled != null) sendReceipt("delivered", listOf(handled))
         ws?.sendAck(listOf(id))
+        return handled
     }
 
     private fun handlePairEnvelope(from: String, ct: String) {
@@ -409,10 +427,11 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         }
     }
 
-    private fun handleMsgEnvelope(from: String, seq: Long, ct: String) {
-        val p = _partner.value ?: return
-        val k = keys ?: return
-        if (from != p.uuid || seq <= k.recvCounter) return
+    /** 处理普通消息；成功返回 seq（供调用方回传"已送达✓✓"），失败返回 null */
+    private fun handleMsgEnvelope(from: String, seq: Long, ct: String): Long? {
+        val p = _partner.value ?: return null
+        val k = keys ?: return null
+        if (from != p.uuid || seq <= k.recvCounter) return null
         try {
             val pt = Crypto.openWire(
                 B64.dec(k.recv), ct, seq,
@@ -427,14 +446,16 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                             outgoing = false,
                             body = o["body"]?.jsonPrimitive?.contentOrNull ?: "",
                             ts = o["ts"]?.jsonPrimitive?.long ?: System.currentTimeMillis(),
-                            status = MSG_SENT,
+                            status = MSG_DELIVERED,
                         )
                     )
                 }
             }
             updateCounters(recv = seq)
+            return seq
         } catch (_: Exception) {
             // 解密失败（篡改/重放）→ 丢弃
+            return null
         }
     }
 
@@ -455,13 +476,110 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                 Crypto.canonMsgAad(identity.uuid, p.uuid, seq),
                 inner.toByteArray(Charsets.UTF_8),
             )
-            val dbId = dao.insert(MessageEntity(seq = seq, outgoing = true, body = text, ts = System.currentTimeMillis(), status = MSG_SENDING))
+            // 密文与 seq 一并入库：失败进重发队列（重发同一密文，nonce 不复用问题不存在——是同一封信重投）
+            val dbId = dao.insert(
+                MessageEntity(
+                    seq = seq, outgoing = true, body = text,
+                    ts = System.currentTimeMillis(), status = MSG_SENDING, wire = wire,
+                )
+            )
             try {
                 api?.envelopePost(p.uuid, "msg", seq, wire)
                 updateCounters(send = seq)
                 dao.updateStatus(dbId, MSG_SENT)
             } catch (e: Exception) {
-                _error.value = "发送失败：${e.message}（M1 支持自动重发）"
+                _error.value = "发送失败，已进入重发队列（恢复联网后自动补发）"
+            }
+        }
+    }
+
+    // ---------- 回执 / 重发 / 过期（M1） ----------
+
+    /** 回执信封（delivered/read），与消息走同一 E2E 通道 */
+    private fun sendReceipt(kind: String, seqs: List<Long>) {
+        val p = _partner.value ?: return
+        val k = keys ?: return
+        if (seqs.isEmpty()) return
+        scope.launch {
+            val seq = k.sendCounter + 1
+            val seqsJson = seqs.joinToString(",", "[", "]")
+            val inner = "{\"t\":\"$kind\",\"seqs\":$seqsJson}"
+            val wire = Crypto.sealWire(
+                B64.dec(k.send), B64.dec(k.sendPrefix), seq,
+                Crypto.canonMsgAad(identity.uuid, p.uuid, seq),
+                inner.toByteArray(Charsets.UTF_8),
+            )
+            try {
+                api?.envelopePost(p.uuid, "read", seq, wire)
+                updateCounters(send = seq)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 处理对方回执：delivered → ✓✓，read → 已读 */
+    private fun handleReadEnvelope(from: String, seq: Long, ct: String): Long? {
+        val p = _partner.value ?: return null
+        val k = keys ?: return null
+        if (from != p.uuid) return null
+        return try {
+            val pt = Crypto.openWire(
+                B64.dec(k.recv), ct, seq,
+                Crypto.canonMsgAad(p.uuid, identity.uuid, seq)
+            )
+            val o = json.parseToJsonElement(String(pt, Charsets.UTF_8)).jsonObject
+            val kind = o["t"]?.jsonPrimitive?.contentOrNull ?: return null
+            val seqs = (o["seqs"] as? kotlinx.serialization.json.JsonArray)
+                ?.map { it.jsonPrimitive.long } ?: return null
+            scope.launch {
+                when (kind) {
+                    "delivered" -> db().messages().upgradeBySeqs(seqs, MSG_DELIVERED)
+                    "read" -> db().messages().upgradeBySeqs(seqs, MSG_READ)
+                }
+            }
+            updateCounters(recv = seq)
+            seq
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** 打开私聊界面：未读消息标记已读并回传回执 */
+    fun markReadOnOpen() {
+        scope.launch {
+            try {
+                val seqs = db().messages().unreadIncomingSeqs()
+                if (seqs.isNotEmpty()) sendReceipt("read", seqs)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 重发队列：SENDING 状态的密文原样补发（同一封信重投，接收端按 seq 幂等去重） */
+    fun resendPending() {
+        val p = _partner.value ?: return
+        val a = api ?: return
+        scope.launch {
+            try {
+                for (m in db().messages().byStatus(MSG_SENDING)) {
+                    val wire = m.wire ?: continue
+                    try {
+                        a.envelopePost(p.uuid, "msg", m.seq, wire)
+                        db().messages().updateStatus(m.id, MSG_SENT)
+                    } catch (_: Exception) {
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 超过 7 天仍未送达的本地消息标记 ❗过期 */
+    fun sweepExpiry() {
+        scope.launch {
+            try {
+                db().messages().markExpired(System.currentTimeMillis() - TTL_MS)
+            } catch (_: Exception) {
             }
         }
     }

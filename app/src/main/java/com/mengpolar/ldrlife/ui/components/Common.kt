@@ -24,6 +24,9 @@ import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
+import com.mengpolar.ldrlife.data.MSG_DELIVERED
+import com.mengpolar.ldrlife.data.MSG_EXPIRED
+import com.mengpolar.ldrlife.data.MSG_READ
 import com.mengpolar.ldrlife.data.MSG_SENT
 import com.mengpolar.ldrlife.data.MessageEntity
 import com.mengpolar.ldrlife.session.IncomingRequest
@@ -74,10 +77,19 @@ fun MessageBubble(m: MessageEntity) {
                 style = MaterialTheme.typography.bodyLarge,
             )
         }
+        val expired = m.status == MSG_EXPIRED
+        val statusText = when {
+            !m.outgoing -> ""
+            expired -> "  ❗未送达（超过 7 天）"
+            m.status == MSG_READ -> "  已读"
+            m.status == MSG_DELIVERED -> "  ✓✓"
+            m.status == MSG_SENT -> "  ✓"
+            else -> "  ⏳"
+        }
         Text(
-            formatTs(m.ts) + if (m.outgoing) (if (m.status == MSG_SENT) "  ✓" else "  …") else "",
+            formatTs(m.ts) + statusText,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (expired) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

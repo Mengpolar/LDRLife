@@ -37,6 +37,11 @@ fun ChatScreen(session: Session, onBack: () -> Unit) {
     val partner = session.partner.collectAsState().value
     val input = remember { mutableStateOf("") }
 
+    // 打开私聊 & 新消息到达 → 回传已读回执（M1）
+    androidx.compose.runtime.LaunchedEffect(messages.size) {
+        session.markReadOnOpen()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
