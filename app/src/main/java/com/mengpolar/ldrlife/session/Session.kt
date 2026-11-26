@@ -377,10 +377,12 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     }
 
     fun decide(id: Long, approve: Boolean) {
-        val a = api ?: return
+        android.util.Log.d("LDR", "decide called id=$id approve=$approve")
+        val a = api ?: run { android.util.Log.d("LDR", "decide: api null"); return }
         scope.launch {
             try {
                 val resp = a.pairDecision(id, approve)
+                android.util.Log.d("LDR", "decide ok id=$id approve=$approve")
                 _incoming.value = _incoming.value.filterNot { it.id == id }
                 if (approve) {
                     val peer = resp["peer"]?.jsonObject ?: return@launch
@@ -393,6 +395,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                     )
                 }
             } catch (e: Exception) {
+                android.util.Log.d("LDR", "decide failed: ${e.message}")
                 // 竞态：同意时申请已被对方撤销 → 404，提示"对方已取消"而非笼统失败
                 _error.value = if (approve && e is ApiException && e.status == 404) {
                     "对方已取消了配对申请"

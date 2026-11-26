@@ -19,7 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
@@ -36,6 +36,7 @@ import kotlin.random.Random
  */
 private data class HeartAnim(val id: Int, val x: Float, val y: Float, val rot: Float)
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun FloatingHeartsLayer(modifier: Modifier = Modifier) {
     val hearts = remember { mutableStateListOf<HeartAnim>() }
@@ -46,19 +47,21 @@ fun FloatingHeartsLayer(modifier: Modifier = Modifier) {
     Box(
         modifier
             .onGloballyPositioned { w = it.size.width; h = it.size.height }
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
+            .pointerInteropFilter { event ->
+                // 原生层 hook：只读触点坐标生成爱心，返回 false = 完全不消费，
+                // Compose 手势系统完全不受影响
+                if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
                     hearts.add(
                         HeartAnim(
                             id = nextId++,
-                            x = down.position.x.coerceIn(44f, (w - 44).toFloat()),
-                            y = down.position.y.coerceIn(60f, (h - 60).toFloat()),
+                            x = event.x.coerceIn(44f, (w - 44).toFloat()),
+                            y = event.y.coerceIn(60f, (h - 60).toFloat()),
                             rot = Random.nextFloat() * 36f - 18f, // ±18° 随机倾斜
                         )
                     )
                     if (hearts.size > 12) hearts.removeAt(0) // 连击防爆量
                 }
+                false
             },
     ) {
         hearts.forEach { heart ->

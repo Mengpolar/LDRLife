@@ -269,7 +269,7 @@ fun HomeScreen(
                 HeartBubbleButton(onClick = onHaptic)
             }
             Text(
-                "想念，就盖一枚印",
+                "想念，就点一颗心",
                 style = LetterType.Footnote,
                 color = InkColors.InkSoft,
                 modifier = Modifier.fillMaxWidth(),
