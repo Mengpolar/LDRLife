@@ -1,7 +1,7 @@
 {
-  "versionCode": 9,
-  "versionName": "0.0.9",
-  "apkUrl": "https://github.com/Mengpolar/LDRLife/releases/download/v0.0.9/LDRLife-debug.apk",
-  "sha256": "c74d104b1f092966d9832b438f6d07dc8490f9592663663549a337a789d41412",
-  "notes": "LDRLife 0.0.9"
+  "versionCode": 10,
+  "versionName": "0.0.10",
+  "apkUrl": "https://github.com/Mengpolar/LDRLife/releases/download/v0.0.10/LDRLife-debug.apk",
+  "sha256": "3a68036be8bb896b9c2561dd8d737efa16f2ea5f03baf75831256a1b6e2a5bfd",
+  "notes": "LDRLife 0.0.10"
 }
