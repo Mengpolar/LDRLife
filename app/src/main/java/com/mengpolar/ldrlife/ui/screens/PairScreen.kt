@@ -20,6 +20,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,7 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mengpolar.ldrlife.session.Phase
 import com.mengpolar.ldrlife.session.Session
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,6 +40,15 @@ fun PairScreen(session: Session, onBack: () -> Unit) {
     val error = session.error.collectAsState().value
     val waiting = session.waiting.collectAsState().value
     val incoming = session.incoming.collectAsState().value
+    val phase = session.phase.collectAsState().value
+
+    // 对方同意后自动返回主页（用户要求：不停留在申请页）
+    LaunchedEffect(phase) {
+        if (phase == Phase.PAIRED) {
+            delay(600)
+            onBack()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -69,9 +81,16 @@ fun PairScreen(session: Session, onBack: () -> Unit) {
                 enabled = !busy && code.value.length == 7,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("发送配对申请") }
-            if (waiting) {
+            if (phase == Phase.PAIRED) {
+                Text("配对成功！正在返回主页…", color = MaterialTheme.colorScheme.primary)
+            } else if (waiting) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text("等待对方确认中…对方同意后会自动完成绑定")
+                Button(
+                    onClick = { session.cancelPairRequest() },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("取消申请") }
             }
             if (incoming.isNotEmpty()) {
                 Text("收到的配对申请", style = MaterialTheme.typography.titleMedium)

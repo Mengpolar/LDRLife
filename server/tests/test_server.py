@@ -230,3 +230,104 @@ def test_luhn():
     assert auth.luhn_valid(full) and len(full) == 7
     tampered = ("9" if full[0] != "9" else "1") + full[1:]
     assert not auth.luhn_valid(tampered)
+
+
+# ---------- 配对状态机（v0.0.9）：取消 / 对账 / 去重 ----------
+
+def _request(client: TestClient, requester: Dev, target: Dev) -> int:
+    sig = requester.sign(auth.canon_pairreq(target.code, requester.uuid, requester.xPub, requester.ePub))
+    r = client.post(f"/{GATE}/v1/pair/request", json={
+        "code": target.code, "from_uuid": requester.uuid,
+        "x25519": requester.xPub, "ed25519": requester.ePub, "sig": sig,
+    })
+    assert r.status_code == 202, r.text
+    return r.json()["id"]
+
+
+def test_pair_cancel_flow(tmp_path):
+    client = make_env(tmp_path)
+    a, b = Dev("121212"), Dev("343434")
+    register(client, a)
+    register(client, b)
+
+    req_id = _request(client, a, b)
+
+    # B 看得到申请
+    r = client.get(f"/{GATE}/v1/pair/pending", params={"uuid": b.uuid},
+                   headers=b.auth_headers("GET", "/v1/pair/pending"))
+    assert len(r.json()["requests"]) == 1
+
+    # A 撤销 → 200；B 的 pending 清空
+    r = client.post(f"/{GATE}/v1/pair/cancel?uuid={a.uuid}", json={"request_id": req_id},
+                    headers=a.auth_headers("POST", "/v1/pair/cancel"))
+    assert r.status_code == 200, r.text
+    r = client.get(f"/{GATE}/v1/pair/pending", params={"uuid": b.uuid},
+                   headers=b.auth_headers("GET", "/v1/pair/pending"))
+    assert r.json()["requests"] == []
+
+    # 重复撤销 → 404（已被处理）
+    r = client.post(f"/{GATE}/v1/pair/cancel?uuid={a.uuid}", json={"request_id": req_id},
+                    headers=a.auth_headers("POST", "/v1/pair/cancel"))
+    assert r.status_code == 404
+
+    # 非本人撤销 → 403
+    req_id2 = _request(client, a, b)
+    r = client.post(f"/{GATE}/v1/pair/cancel?uuid={b.uuid}", json={"request_id": req_id2},
+                    headers=b.auth_headers("POST", "/v1/pair/cancel"))
+    assert r.status_code == 403
+
+
+def test_decision_after_cancel_404(tmp_path):
+    """竞态：A 先取消，B 再同意 → 404，B 端据此提示"对方已取消\""""
+    client = make_env(tmp_path)
+    a, b = Dev("565656"), Dev("787878")
+    register(client, a)
+    register(client, b)
+    req_id = _request(client, a, b)
+    r = client.post(f"/{GATE}/v1/pair/cancel?uuid={a.uuid}", json={"request_id": req_id},
+                    headers=a.auth_headers("POST", "/v1/pair/cancel"))
+    assert r.status_code == 200
+    dsig = b.sign(auth.canon_pairdec(req_id, b.uuid, True))
+    r = client.post(f"/{GATE}/v1/pair/decision", json={
+        "uuid": b.uuid, "request_id": req_id, "approve": True, "sig": dsig,
+    })
+    assert r.status_code == 404
+    # 双方仍未配对
+    for d in (a, b):
+        r = client.get(f"/{GATE}/v1/pair/status", params={"uuid": d.uuid},
+                       headers=d.auth_headers("GET", "/v1/pair/status"))
+        assert r.json()["paired_with"] is None
+
+
+def test_request_dedupe(tmp_path):
+    """同一申请方重复申请 → 幂等替换，目标端只看到一条"""
+    client = make_env(tmp_path)
+    a, b = Dev("909090"), Dev("232323")
+    register(client, a)
+    register(client, b)
+    _request(client, a, b)
+    _request(client, a, b)
+    r = client.get(f"/{GATE}/v1/pair/pending", params={"uuid": b.uuid},
+                   headers=b.auth_headers("GET", "/v1/pair/pending"))
+    reqs = r.json()["requests"]
+    assert len(reqs) == 1 and reqs[0]["from_uuid"] == a.uuid
+
+
+def test_unbind_reconcile(tmp_path):
+    """解绑后双方 paired_with 均清空；未配对再解绑 → 400"""
+    client = make_env(tmp_path)
+    a, b = Dev("454545"), Dev("676767")
+    register(client, a)
+    register(client, b)
+    pair_devices(client, b, a)
+
+    r = client.post(f"/{GATE}/v1/pair/unbind?uuid={a.uuid}", json={},
+                    headers=a.auth_headers("POST", "/v1/pair/unbind"))
+    assert r.status_code == 200
+    for d in (a, b):
+        r = client.get(f"/{GATE}/v1/pair/status", params={"uuid": d.uuid},
+                       headers=d.auth_headers("GET", "/v1/pair/status"))
+        assert r.json()["paired_with"] is None
+    r = client.post(f"/{GATE}/v1/pair/unbind?uuid={a.uuid}", json={},
+                    headers=a.auth_headers("POST", "/v1/pair/unbind"))
+    assert r.status_code == 400

@@ -120,6 +120,16 @@ class Api(private val cfgProvider: () -> ServerConfig?, private val identity: Id
     suspend fun unbind(): JsonObject =
         post("/v1/pair/unbind", query = "?uuid=${identity.uuid}", body = buildJsonObject { }, auth = true)
 
+    /** 撤销自己的 pending 配对申请（404 = 已被对方处理，按取消完成对待） */
+    suspend fun pairCancel(requestId: Long): JsonObject =
+        post("/v1/pair/cancel", query = "?uuid=${identity.uuid}", body = buildJsonObject {
+            put("request_id", requestId)
+        }, auth = true)
+
+    /** 配对状态对账：paired_with 与本地 partner 不一致 → 对方已解绑 */
+    suspend fun pairStatus(): JsonObject =
+        get("/v1/pair/status", "?uuid=${identity.uuid}", auth = true)
+
     suspend fun envelopePost(to: String, hint: String, seq: Long, ctWire: String): Long {
         val o = post("/v1/envelope", body = buildJsonObject {
             put("from", identity.uuid)

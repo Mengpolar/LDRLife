@@ -154,6 +154,8 @@ class Store:
 
     def create_pair_request(self, from_uuid: str, to_uuid: str, x25519: str, ed25519: str) -> int:
         with self.lock:
+            # 幂等替换：同一申请方只保留一个 pending（重复申请覆盖旧的）
+            self.db.execute("DELETE FROM pair_requests WHERE from_uuid=?", (from_uuid,))
             cur = self.db.execute(
                 "INSERT INTO pair_requests(from_uuid, to_uuid, x25519_pub, ed25519_pub, created_at) VALUES(?,?,?,?,?)",
                 (from_uuid, to_uuid, x25519, ed25519, int(time.time())),

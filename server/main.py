@@ -54,6 +54,10 @@ class PairDecReq(BaseModel):
     sig: str
 
 
+class PairCancelBody(BaseModel):
+    request_id: int
+
+
 class EnvBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     from_uuid: str = Field(alias="from")
@@ -236,6 +240,8 @@ def create_app(cfg: Config):
             raise HTTPException(403, "not your request")
         if not req.approve:
             store.delete_pair_request(pr["id"])
+            # 通知申请方：对方拒绝了
+            hub.send_to(pr["from_uuid"], {"t": "pair_denied", "request_id": pr["id"]})
             return {"ok": True}
         if d["paired_with"]:
             raise HTTPException(409, "already paired")
@@ -275,6 +281,27 @@ def create_app(cfg: Config):
             raise HTTPException(400, "not paired")
         hub.send_to(partner, {"t": "unpaired"})
         return {"ok": True}
+
+    # 申请方撤销自己的 pending 申请：B 在线即时收到 pair_cancelled，离线则 pending 拉取自然消失。
+    # 若 B 恰好已同意（request 已删）→ 404，申请方按"以配对结果为准"处理（approved 信封随后到达）。
+    @app.post("/v1/pair/cancel")
+    async def pair_cancel(body: PairCancelBody, request: Request, uuid: str):
+        d = check_auth(request, uuid, "/v1/pair/cancel")
+        pr = store.get_pair_request(body.request_id)
+        if pr is None:
+            raise HTTPException(404, "request not found (maybe approved)")
+        if pr["from_uuid"] != d["uuid"]:
+            raise HTTPException(403, "not your request")
+        store.delete_pair_request(pr["id"])
+        hub.send_to(pr["to_uuid"], {"t": "pair_cancelled", "request_id": pr["id"]})
+        return {"ok": True}
+
+    # 配对状态对账：客户端定期比对本地 partner 与服务器 paired_with，
+    # 不一致（对方解绑且离线错过推送）→ 客户端本地清配对并提示
+    @app.get("/v1/pair/status")
+    async def pair_status(request: Request, uuid: str):
+        d = check_auth(request, uuid, "/v1/pair/status")
+        return {"paired_with": d["paired_with"]}
 
     # ---------- envelope ----------
 

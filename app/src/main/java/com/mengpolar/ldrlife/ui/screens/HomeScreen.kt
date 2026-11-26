@@ -65,6 +65,8 @@ fun HomeScreen(
     val partnerLoc = session.partnerLoc.collectAsState().value
     val partnerUsage = session.partnerUsage.collectAsState().value
     val lastHaptic = session.lastHaptic.collectAsState().value
+    val myLoc = session.myLoc.collectAsState().value
+    val myUsage = session.myUsage.collectAsState().value
     val clipboard = LocalClipboardManager.current
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var showQr by remember { mutableStateOf(false) }
@@ -88,6 +90,24 @@ fun HomeScreen(
         ) {
             StatusChip(online = conn == ConnState.ONLINE)
             UpdateBanner(rememberUpdater())
+            // 我的状态（状态与配对解耦：未连接/未配对也可用本地功能）
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "我的位置：" + (myLoc?.let { "已更新 · ${freshnessOf(it.ts)}" } ?: "未定位（点下方按钮定位）"),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(
+                        "我正在用：" + (myUsage?.let { "${it.app} · ${freshnessOf(it.ts)}" } ?: "待检测"),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+            TextButton(onClick = onMap) { Text("查看我的位置（地图）") }
             lastHaptic?.let { h ->
                 Surface(
                     shape = RoundedCornerShape(14.dp),

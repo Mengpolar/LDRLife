@@ -31,6 +31,8 @@ class WsClient(
     private val onPairRequest: (id: Long, fromUuid: String, xB64: String, eB64: String) -> Unit,
     private val onEnvelope: (id: Long, from: String, hint: String, seq: Long, ct: String) -> Unit,
     private val onUnpaired: () -> Unit,
+    private val onPairCancelled: (requestId: Long) -> Unit,
+    private val onPairDenied: (requestId: Long) -> Unit,
     private val onState: (online: Boolean) -> Unit,
 ) {
     private val client = OkHttpClient.Builder()
@@ -115,6 +117,12 @@ class WsClient(
                         o["ct"]!!.jsonPrimitive.content,
                     )
                     "unpaired" -> onUnpaired()
+                    "pair_cancelled" -> onPairCancelled(
+                        o["request_id"]?.jsonPrimitive?.long ?: -1L
+                    )
+                    "pair_denied" -> onPairDenied(
+                        o["request_id"]?.jsonPrimitive?.long ?: -1L
+                    )
                 }
             } catch (_: Exception) {
                 // 服务器仅推送结构化 JSON；解析失败静默丢弃

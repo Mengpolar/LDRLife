@@ -12,6 +12,7 @@ import com.mengpolar.ldrlife.core.IdentityManager
 import com.mengpolar.ldrlife.core.LocationProvider
 import com.mengpolar.ldrlife.core.PairCode
 import com.mengpolar.ldrlife.core.Usage
+import com.mengpolar.ldrlife.net.ApiException
 import com.mengpolar.ldrlife.core.Vibe
 import com.mengpolar.ldrlife.data.AppDb
 import com.mengpolar.ldrlife.data.DbFactory
@@ -120,6 +121,13 @@ class Session(private val context: Context, private val prefs: SharedPreferences
 
     private val _waiting = MutableStateFlow(false)
     val waiting: StateFlow<Boolean> = _waiting.asStateFlow()
+
+    /** 自己的 pending 申请 id（取消申请用；-1 = 无） */
+    @Volatile private var pendingReqId: Long = -1L
+
+    /** 我的当前使用状态（本地展示，任何阶段都更新；配对后额外上报） */
+    private val _myUsage = MutableStateFlow<PartnerUsage?>(null)
+    val myUsage: StateFlow<PartnerUsage?> = _myUsage.asStateFlow()
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
@@ -260,6 +268,8 @@ class Session(private val context: Context, private val prefs: SharedPreferences
             onPairRequest = { id, fromUuid, xB64, eB64 -> onPairRequest(id, fromUuid, xB64, eB64) },
             onEnvelope = { id, from, hint, seq, ct -> onEnvelope(id, from, hint, seq, ct) },
             onUnpaired = { onUnpaired() },
+            onPairCancelled = { requestId -> onPairCancelled(requestId) },
+            onPairDenied = { requestId -> onPairDenied(requestId) },
             onState = { online ->
                 _conn.value = if (online) ConnState.ONLINE else ConnState.OFFLINE
                 if (online) refreshIncoming()
@@ -301,6 +311,13 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                     if (hint == "msg" && handledSeq != null) deliveredSeqs.add(handledSeq)
                 }
                 if (deliveredSeqs.isNotEmpty()) sendReceipt("delivered", deliveredSeqs)
+                // 配对状态对账：本地有 partner 但服务器已解绑（离线错过 unpaired 推送）→ 本地清配对
+                try {
+                    val sw = a.pairStatus()["paired_with"]?.jsonPrimitive?.contentOrNull
+                    val p = _partner.value
+                    if (p != null && sw != p.uuid) onUnpaired()
+                } catch (_: Exception) {
+                }
                 resendPending()
             } catch (_: Exception) {
             }
@@ -321,13 +338,30 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         scope.launch {
             _busy.value = true
             try {
-                a.pairRequest(code)
+                pendingReqId = a.pairRequest(code)
                 _error.value = null
                 _waiting.value = true
             } catch (e: Exception) {
+                pendingReqId = -1
                 _error.value = "发送申请失败：${e.message}"
             }
             _busy.value = false
+        }
+    }
+
+    /** 撤销自己的配对申请（B 端在线即时消失，离线靠 pending 对账消失） */
+    fun cancelPairRequest() {
+        val id = pendingReqId
+        pendingReqId = -1
+        _waiting.value = false
+        val a = api ?: return
+        scope.launch {
+            try {
+                a.pairCancel(id)
+            } catch (_: Exception) {
+                // 404（对方已处理）或网络失败：本地一律按"已取消"收尾；若对方已同意，
+                // pair_approved 信封仍会到达并正常建立配对
+            }
         }
     }
 
@@ -348,7 +382,12 @@ class Session(private val context: Context, private val prefs: SharedPreferences
                     )
                 }
             } catch (e: Exception) {
-                _error.value = "操作失败：${e.message}"
+                // 竞态：同意时申请已被对方撤销 → 404，提示"对方已取消"而非笼统失败
+                _error.value = if (approve && e is ApiException && e.status == 404) {
+                    "对方已取消了配对申请"
+                } else {
+                    "操作失败：${e.message}"
+                }
             }
         }
     }
@@ -646,28 +685,33 @@ class Session(private val context: Context, private val prefs: SharedPreferences
 
     // ---------- 位置共享（M2） ----------
 
-    /** 单次定位 → WGS→GCJ → 精度处理 → E2E loc 信封发送（默认精确，精度选择已按用户要求移除） */
-    fun sendMyLocation(precision: Geo.Precision = Geo.Precision.EXACT, quiet: Boolean = false) {
-        val p = _partner.value ?: return
-        val a = api ?: return
+    /**
+     * 单次定位 → WGS→GCJ → 精确坐标 → 更新本地 _myLoc（任何阶段可用）；
+     * 已配对且密钥就绪时额外以 E2E 信封发给对方
+     */
+    fun sendMyLocation(quiet: Boolean = false) {
+        val a = api
         scope.launch {
             val got = LocationProvider.requestSingleFix(context) { lat, lon ->
                 scope.launch {
                     try {
                         val (gLat, gLon) = Geo.wgs84ToGcj02(lat, lon)
-                        val (sLat, sLon) = Geo.applyPrecision(gLat, gLon, precision)
-                        val k = keys ?: return@launch
-                        val seq = k.sendCounter + 1
+                        val (sLat, sLon) = Geo.applyPrecision(gLat, gLon, Geo.Precision.EXACT)
                         val ts = System.currentTimeMillis()
-                        val inner = "{\"t\":\"loc\",\"lat\":$sLat,\"lon\":$sLon,\"precision\":\"${precision.label}\",\"ts\":$ts}"
-                        val wire = Crypto.sealWire(
-                            B64.dec(k.send), B64.dec(k.sendPrefix), seq,
-                            Crypto.canonMsgAad(identity.uuid, p.uuid, seq),
-                            inner.toByteArray(Charsets.UTF_8),
-                        )
-                        a.envelopePost(p.uuid, "loc", seq, wire)
-                        updateCounters(send = seq)
-                        _myLoc.value = PartnerLoc(sLat, sLon, precision.label, ts)
+                        _myLoc.value = PartnerLoc(sLat, sLon, Geo.Precision.EXACT.label, ts)
+                        val p = _partner.value
+                        val k = keys
+                        if (p != null && k != null && a != null) {
+                            val seq = k.sendCounter + 1
+                            val inner = "{\"t\":\"loc\",\"lat\":$sLat,\"lon\":$sLon,\"precision\":\"${Geo.Precision.EXACT.label}\",\"ts\":$ts}"
+                            val wire = Crypto.sealWire(
+                                B64.dec(k.send), B64.dec(k.sendPrefix), seq,
+                                Crypto.canonMsgAad(identity.uuid, p.uuid, seq),
+                                inner.toByteArray(Charsets.UTF_8),
+                            )
+                            a.envelopePost(p.uuid, "loc", seq, wire)
+                            updateCounters(send = seq)
+                        }
                     } catch (_: Exception) {
                     }
                 }
@@ -678,9 +722,8 @@ class Session(private val context: Context, private val prefs: SharedPreferences
 
     private var _lastLocShare = 0L
 
-    /** 后台周期位置（WsService 每 60s 调用，内部 10 分钟节流；失败静默不打扰首页） */
+    /** 后台周期位置（WsService 每 60s 调用，内部 10 分钟节流；本地更新 + 配对时上报；失败静默） */
     fun maybeRefreshLocation() {
-        if (_phase.value != Phase.PAIRED) return
         val now = System.currentTimeMillis()
         if (now - _lastLocShare < 10 * 60 * 1000L) return
         _lastLocShare = now
@@ -798,26 +841,22 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         _lastHaptic.value?.let { sendHaptic(it) }
     }
 
-    /** 应用状态上报：回前台触发；同应用 5 分钟节流；L0 关闭 / L1 仅在用 / L3 应用名 */
+    /** 应用状态：本地 _myUsage 任何阶段都更新；level>0 且已配对时再以 E2E 上报（60s 循环 + 回前台触发） */
     fun reportUsageIfChanged() {
-        if (_phase.value != Phase.PAIRED) return
-        val level = prefs.getInt("usage_level", 3)
-        if (level == 0) return
-        val p = _partner.value ?: return
-        val a = api ?: return
         scope.launch {
             try {
                 val fg = Usage.currentForegroundApp(context)
-                val name = when {
-                    fg == null -> if (level >= 3) "（未在使用/锁屏）" else "未使用"
-                    level >= 3 -> fg.second
-                    else -> "使用手机中"
-                }
+                val name = fg?.second ?: "（未在使用/锁屏）"
                 val now = System.currentTimeMillis()
+                _myUsage.value = PartnerUsage(app = name, ts = now)
+                val level = prefs.getInt("usage_level", 3)
+                if (level == 0) return@launch
                 val last = _lastUsageReport
                 if (last != null && last.first == name && now - last.second < 5 * 60 * 1000) return@launch
                 _lastUsageReport = name to now
+                val p = _partner.value ?: return@launch
                 val k = keys ?: return@launch
+                val a = api ?: return@launch
                 val seq = k.sendCounter + 1
                 val safeName = name.replace("\\", "\\\\").replace("\"", "\\\"")
                 val inner = "{\"t\":\"usage\",\"app\":\"$safeName\",\"ts\":$now}"
@@ -894,6 +933,19 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         _error.value = "对方已解除绑定"
     }
 
+    /** 对方撤销了发给我的配对申请：移除卡片并提示 */
+    private fun onPairCancelled(requestId: Long) {
+        _incoming.value = _incoming.value.filterNot { it.id == requestId }
+        _error.value = "对方取消了配对申请"
+    }
+
+    /** 对方拒绝了我的申请 */
+    private fun onPairDenied(requestId: Long) {
+        pendingReqId = -1
+        _waiting.value = false
+        _error.value = "对方拒绝了你的配对申请"
+    }
+
     private fun clearPartnerLocal() {
         _partner.value = null
         _safety.value = null
@@ -901,6 +953,8 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         _partnerUsage.value = null
         _partnerLoc.value = null
         _myLoc.value = null
+        pendingReqId = -1
+        _waiting.value = false
         keys = null
         _ready.value = false
         _waiting.value = false
