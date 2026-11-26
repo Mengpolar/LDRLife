@@ -199,6 +199,14 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     // ---------- 启动与注册 ----------
 
     fun bootstrap() {
+        // 恢复未完成的配对申请（等待状态持久化：重启后仍显示"等待确认+取消申请"；
+        // 若申请实际已被对方处理，后续 pair_approved/pair_denied 推送或取消 404 会自动纠正）
+        prefs.getLong("pending_req_id", -1L).takeIf { it > 0 }?.let {
+            if (_partner.value == null) {
+                pendingReqId = it
+                _waiting.value = true
+            }
+        }
         try {
             prefs.getString("partner_loc", null)?.let {
                 _partnerLoc.value = json.decodeFromString(PartnerLoc.serializer(), it)
@@ -339,6 +347,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
             _busy.value = true
             try {
                 pendingReqId = a.pairRequest(code)
+                prefs.edit().putLong("pending_req_id", pendingReqId).apply()
                 _error.value = null
                 _waiting.value = true
             } catch (e: Exception) {
@@ -353,7 +362,9 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     fun cancelPairRequest() {
         val id = pendingReqId
         pendingReqId = -1
+        prefs.edit().putLong("pending_req_id", -1L).apply()
         _waiting.value = false
+        _error.value = null
         val a = api ?: return
         scope.launch {
             try {
@@ -396,6 +407,9 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         _partner.value = p
         _safety.value = Crypto.safetyCode(identity.xPubBytes, p.xPubBytes)
         _waiting.value = false
+        pendingReqId = -1
+        prefs.edit().putLong("pending_req_id", -1L).apply()
+        _error.value = null // 配对成功：清掉流程中的旧提示（如"对方取消了配对申请"残留）
         _phase.value = Phase.PAIRED
         _ready.value = false
         myEphPriv = null
@@ -942,6 +956,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
     /** 对方拒绝了我的申请 */
     private fun onPairDenied(requestId: Long) {
         pendingReqId = -1
+        prefs.edit().putLong("pending_req_id", -1L).apply()
         _waiting.value = false
         _error.value = "对方拒绝了你的配对申请"
     }
@@ -954,6 +969,7 @@ class Session(private val context: Context, private val prefs: SharedPreferences
         _partnerLoc.value = null
         _myLoc.value = null
         pendingReqId = -1
+        prefs.edit().putLong("pending_req_id", -1L).apply()
         _waiting.value = false
         keys = null
         _ready.value = false
