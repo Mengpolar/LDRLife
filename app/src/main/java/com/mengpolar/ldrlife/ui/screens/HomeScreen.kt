@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -84,7 +86,8 @@ fun HomeScreen(
         },
     ) { pad ->
         Column(
-            modifier = Modifier.padding(pad).fillMaxSize().padding(24.dp),
+            modifier = Modifier.padding(pad).fillMaxSize().padding(24.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -154,14 +157,13 @@ fun HomeScreen(
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.align(Alignment.Start),
                     )
-                    LazyColumn {
-                        items(incoming) { req ->
-                            IncomingCard(
-                                req = req,
-                                onApprove = { session.decide(req.id, true) },
-                                onDeny = { session.decide(req.id, false) },
-                            )
-                        }
+                    // 普通遍历即可（申请通常一两条）；LazyColumn 嵌在可滚动 Column 里会因无限高度崩溃
+                    incoming.forEach { req ->
+                        IncomingCard(
+                            req = req,
+                            onApprove = { session.decide(req.id, true) },
+                            onDeny = { session.decide(req.id, false) },
+                        )
                     }
                 }
             } else {
