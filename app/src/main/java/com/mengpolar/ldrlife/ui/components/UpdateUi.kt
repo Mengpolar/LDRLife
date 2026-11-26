@@ -1,10 +1,14 @@
 package com.mengpolar.ldrlife.ui.components
 
 import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -22,13 +26,14 @@ import androidx.compose.ui.unit.dp
 import com.mengpolar.ldrlife.BuildConfig
 import com.mengpolar.ldrlife.LdrApp
 import com.mengpolar.ldrlife.core.Updater
+import com.mengpolar.ldrlife.ui.theme.InkColors
 
 /** 应用级单例获取：MainActivity 启动静默检查，设置页可手动检查 */
 @Composable
 fun rememberUpdater(): Updater =
     (LocalContext.current.applicationContext as LdrApp).updater
 
-/** 首页横幅：有新版本（或已就绪）时显示，点击打开更新对话框 */
+/** 首页横幅：信笺式一行朱批（无卡片），点击打开更新对话框 */
 @Composable
 fun UpdateBanner(updater: Updater, modifier: Modifier = Modifier) {
     val state by updater.state.collectAsState()
@@ -39,16 +44,28 @@ fun UpdateBanner(updater: Updater, modifier: Modifier = Modifier) {
         else -> null
     }
     if (ver == null) return
-    Surface(
-        onClick = { updater.dialogVisible.value = true },
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        modifier = modifier.fillMaxWidth(),
+    val label = when (val s = state) {
+        is Updater.State.Downloading -> "正在下载 v$ver（${s.progress}%）"
+        is Updater.State.Ready -> "v$ver 已就绪 · 去安装"
+        else -> "发现新版本 v$ver"
+    }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { updater.dialogVisible.value = true }
+            .padding(vertical = 6.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         Text(
-            "发现新版本 v$ver · 点击更新",
-            modifier = Modifier.padding(10.dp),
+            label,
             style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            "查看",
+            style = MaterialTheme.typography.labelMedium,
+            color = InkColors.InkSoft,
         )
     }
 }

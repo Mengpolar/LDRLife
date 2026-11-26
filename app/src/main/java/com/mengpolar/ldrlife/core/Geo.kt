@@ -40,9 +40,9 @@ object Geo {
     }
 
     fun formatKm(km: Double): String = when {
-        km < 1.0 -> "${(km * 1000).toInt()} m"
-        km < 100.0 -> String.format("%.1f km", km)
-        else -> "${km.toInt()} km"
+        km < 1.0 -> "${(km * 1000).toInt()} 米"
+        km < 100.0 -> String.format("%.1f 公里", km)
+        else -> "${km.toInt()} 公里"
     }
 
     // ---------- WGS-84 → GCJ-02（国测局公开偏移算法） ----------

@@ -3,11 +3,17 @@ package com.mengpolar.ldrlife.ui.components
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
+import com.mengpolar.ldrlife.ui.theme.InkColors
+import com.mengpolar.ldrlife.ui.theme.LetterType
 import com.mengpolar.ldrlife.data.MSG_DELIVERED
 import com.mengpolar.ldrlife.data.MSG_EXPIRED
 import com.mengpolar.ldrlife.data.MSG_READ
@@ -50,12 +58,31 @@ fun StatusChip(online: Boolean) {
 
 @Composable
 fun IncomingCard(req: IncomingRequest, onApprove: () -> Unit, onDeny: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("设备 ${req.fromUuid.take(8)} 请求与你绑定", style = MaterialTheme.typography.bodyLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onDeny) { Text("拒绝") }
-                TextButton(onClick = onApprove) { Text("同意绑定") }
+    // 信笺式：左侧一根淡墨竖线 + 墨字，无卡片
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+    ) {
+        Box(
+            Modifier
+                .width(2.dp)
+                .fillMaxHeight()
+                .background(InkColors.Rule),
+        )
+        Column(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)) {
+            Text(
+                "设备 ${req.fromUuid.take(8)} 请求与你绑定",
+                style = MaterialTheme.typography.bodyLarge,
+                color = InkColors.Ink,
+            )
+            Row {
+                TextButton(onClick = onDeny) {
+                    Text("拒绝", style = LetterType.Footnote, color = InkColors.InkSoft)
+                }
+                TextButton(onClick = onApprove) {
+                    Text("同意绑定", style = LetterType.Footnote, color = InkColors.Cinnabar)
+                }
             }
         }
     }

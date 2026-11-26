@@ -38,8 +38,11 @@ object Usage {
         }
     }
 
-    private fun excluded(pkg: String): Boolean =
-        EXCLUDE.any { pkg.startsWith(it) } || pkg.contains("launcher") || pkg.contains("inputmethod")
+    private fun excluded(pkg: String): Boolean {
+        val p = pkg.lowercase()
+        return EXCLUDE.any { p.startsWith(it.lowercase()) } ||
+            p.contains("launcher") || p.contains("lawnchair") || p.contains("inputmethod")
+    }
 
     private fun labelOf(ctx: Context, pkg: String): String = try {
         ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString()
