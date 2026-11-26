@@ -117,7 +117,7 @@ def create_app(cfg: Config):
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         threading.Thread(target=limiter.janitor_loop, daemon=True).start()
-        sweep = asyncio.create_task(_sweep_loop(store))
+        sweep = asyncio.create_task(_sweep_loop(store, hub))
         bg_tasks.append(sweep)
         yield
         sweep.cancel()
@@ -425,11 +425,15 @@ def create_app(cfg: Config):
     return GateMiddleware(app, cfg, limiter)
 
 
-async def _sweep_loop(store: Store):
+async def _sweep_loop(store: Store, hub: 'Hub'):
     while True:
         await asyncio.sleep(600)
         try:
             store.sweep_expired()
+            # 僵尸设备清理可能解绑了仍在线的伴侣 → 推送断开通知（离线则靠对账兜底）
+            for partner in getattr(store, "_last_stale_partners", []) or []:
+                hub.send_to(partner, {"t": "unpaired"})
+            store._last_stale_partners = []
         except Exception:
             pass
 

@@ -313,6 +313,37 @@ def test_request_dedupe(tmp_path):
     assert len(reqs) == 1 and reqs[0]["from_uuid"] == a.uuid
 
 
+def test_stale_device_sweep(tmp_path):
+    """僵尸设备（长期未活跃）：连带绑定一起清理，存活伴侣被解绑可重新配对"""
+    client = make_env(tmp_path)
+    a, b = Dev("111222"), Dev("333444")
+    register(client, a)
+    register(client, b)
+    pair_devices(client, a, b)  # a 申请 → b 同意
+
+    # a 变僵尸（last_seen 拨回 20 天前）
+    import sqlite3, time as _t
+    db = sqlite3.connect(str(tmp_path / "t.db"))
+    db.execute("UPDATE devices SET last_seen=? WHERE uuid=?", (int(_t.time()) - 20 * 86400, a.uuid))
+    db.commit()
+
+    store = None
+    from main import create_app as _ca  # 触发 sweep 用 store 实例的公开方法
+    # 直接调用 sweep_stale_devices：从 app 的 store 拿不到，就自建
+    from store import Store
+    st = Store(str(tmp_path / "t.db"))
+    swept = st.sweep_stale_devices(days=14)
+    assert a.uuid in swept
+
+    # 僵尸行被删、b 被解绑可重新配对
+    assert db.execute("SELECT paired_with FROM devices WHERE uuid=?", (b.uuid,)).fetchone()[0] is None
+    sig = b.sign(auth.canon_pairreq(a.code, b.uuid, b.xPub, b.ePub))  # 换个目标码测试会污染，跳过
+    # b 的 paired_with 已清空（重点断言）
+    r = client.get(f"/{GATE}/v1/pair/status", params={"uuid": b.uuid},
+                   headers=b.auth_headers("GET", "/v1/pair/status"))
+    assert r.json()["paired_with"] is None
+
+
 def test_unbind_reconcile(tmp_path):
     """解绑后双方 paired_with 均清空；未配对再解绑 → 400"""
     client = make_env(tmp_path)

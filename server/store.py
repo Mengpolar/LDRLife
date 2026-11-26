@@ -224,4 +224,45 @@ class Store:
             self.db.execute("DELETE FROM envelopes WHERE expires_at < ?", (now,))
             self.db.execute("DELETE FROM pair_requests WHERE created_at < ?",
                             (now - PAIR_REQUEST_TTL,))
+            self.sweep_stale_devices(days=14, now=now)
             self.db.commit()
+
+    def sweep_stale_devices(self, days: int = 14, now: int | None = None) -> list[str]:
+        """僵尸设备清理：长期未活跃（重装/清除数据后旧身份永不上线）的设备行
+        连同其绑定关系、暂存信封、配对申请一并清除，避免悬空绑定阻断新配对。
+        返回被清理的 uuid 列表。"""
+        now = now or int(time.time())
+        cutoff = now - days * 86400
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT uuid FROM devices WHERE last_seen < ? AND paired_with IS NULL",
+                (cutoff,),
+            ).fetchall()
+            stale = [r[0] for r in rows]
+            # 有绑定关系的僵尸：先解绑对方（对方可能还活着，需要收到断开对账）
+            bound = self.db.execute(
+                "SELECT uuid, paired_with FROM devices WHERE last_seen < ? AND paired_with IS NOT NULL",
+                (cutoff,),
+            ).fetchall()
+            partners_to_notify = []
+            for uuid, partner in bound:
+                stale.append(uuid)
+                if partner and partner not in stale:
+                    self.db.execute(
+                        "UPDATE devices SET paired_with=NULL WHERE uuid=?", (partner,)
+                    )
+                    partners_to_notify.append(partner)
+            if stale:
+                marks = ",".join("?" for _ in stale)
+                self.db.execute(f"DELETE FROM devices WHERE uuid IN ({marks})", stale)
+                self.db.execute(
+                    f"DELETE FROM envelopes WHERE from_uuid IN ({marks}) OR to_uuid IN ({marks})",
+                    stale + stale,
+                )
+                self.db.execute(
+                    f"DELETE FROM pair_requests WHERE from_uuid IN ({marks}) OR to_uuid IN ({marks})",
+                    stale + stale,
+                )
+            self._last_stale_partners = partners_to_notify
+            self.db.commit()
+            return stale

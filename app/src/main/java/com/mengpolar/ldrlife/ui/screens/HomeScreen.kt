@@ -1,5 +1,6 @@
 package com.mengpolar.ldrlife.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,19 +17,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,17 +38,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mengpolar.ldrlife.R
 import com.mengpolar.ldrlife.core.Geo
 import com.mengpolar.ldrlife.core.PairCode
 import com.mengpolar.ldrlife.session.ConnState
@@ -99,18 +99,29 @@ fun HomeScreen(
     ) {
         Spacer(Modifier.height(18.dp))
 
-        // 抬头：名 + 设置
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "倾卿",
-                style = LetterType.TitleSmall.copy(fontSize = 24.sp),
-                color = InkColors.Ink,
-            )
-            IconButton(onClick = onSettings) {
+        // 顶部居中：连接状态（心形 + 文字）；右上角保留设置入口
+        Box(Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.align(Alignment.Center),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Favorite,
+                    contentDescription = null,
+                    tint = if (conn == ConnState.ONLINE) InkColors.Cinnabar else InkColors.InkSoft,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (conn == ConnState.ONLINE) "已连接" else "未连接",
+                    style = LetterType.Footnote,
+                    color = InkColors.InkSoft,
+                )
+            }
+            IconButton(
+                onClick = onSettings,
+                modifier = Modifier.align(Alignment.CenterEnd),
+            ) {
                 Icon(
                     Icons.Default.Settings,
                     contentDescription = "设置",
@@ -118,11 +129,6 @@ fun HomeScreen(
                 )
             }
         }
-        Text(
-            if (conn == ConnState.ONLINE) "已连接 · 信箱畅通" else "未连接 · 正在重连",
-            style = LetterType.Footnote,
-            color = InkColors.InkSoft,
-        )
         UpdateBanner(rememberUpdater())
 
         Spacer(Modifier.height(26.dp))
@@ -177,24 +183,15 @@ fun HomeScreen(
             )
         }
 
-        // 朱批：卿想你了（小印角标 + 书信口吻，不用 emoji）
+        // 朱批：卿想你了（爱心小图 + 可爱口吻，不用 emoji）
         lastHaptic?.let { h ->
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(18.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(InkColors.Cinnabar),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "念",
-                        fontFamily = FontFamily.Serif,
-                        fontSize = 11.sp,
-                        color = InkColors.Paper,
-                    )
-                }
+                Image(
+                    painter = painterResource(R.drawable.heart_float),
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     "卿想你了",
@@ -269,7 +266,7 @@ fun HomeScreen(
             // 已配对：朱印「念」
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
-                SealButton(onClick = onHaptic)
+                HeartBubbleButton(onClick = onHaptic)
             }
             Text(
                 "想念，就盖一枚印",
@@ -354,21 +351,19 @@ private fun LetterButton(text: String, onClick: () -> Unit) {
     }
 }
 
-/** 朱砂印「念」：微圆近直角、朱砂深浅渐变模拟印泥不均，按下轻微缩放（降级为普通点击） */
+/** 爱心气泡按钮：白圆底 + 手绘粉心，按下轻微缩放（降级为普通点击），点击进入想你了 */
 @Composable
-private fun SealButton(onClick: () -> Unit) {
+private fun HeartBubbleButton(onClick: () -> Unit) {
     var pressed by remember { mutableStateOf(false) }
-    val scale = if (pressed) 0.92f else 1f
+    val scale = if (pressed) 0.88f else 1f
     Box(
         Modifier
-            .size(96.dp)
+            .size(108.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(6.dp))
-            .background(
-                androidx.compose.ui.graphics.Brush.linearGradient(
-                    listOf(InkColors.Cinnabar, Color(0xFFA83424), InkColors.Cinnabar)
-                )
-            )
+            .shadow(6.dp, CircleShape)
+            .clip(CircleShape)
+            .background(Color.White)
+            .border(3.dp, InkColors.Cinnabar, CircleShape)
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
@@ -381,28 +376,19 @@ private fun SealButton(onClick: () -> Unit) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        // 内框细线：印章的边栏
-        Box(
-            Modifier
-                .padding(5.dp)
-                .fillMaxSize()
-                .border(1.dp, Color(0x4DF7F3EC), RoundedCornerShape(3.dp)),
-        )
-        Text(
-            "念",
-            fontFamily = FontFamily.Serif,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 40.sp,
-            color = InkColors.Paper,
+        Image(
+            painter = painterResource(R.drawable.heart_float),
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
         )
     }
 }
 
 private fun freshnessOf(ts: Long): String {
-    val mins = (System.currentTimeMillis() - ts) / 60000
+    val mins = ((System.currentTimeMillis() - ts) / 60000).toInt()
     return when {
         mins < 1 -> "刚刚"
-        mins < 60 -> "$mins 分钟前"
-        else -> "${mins / 60} 小时前"
+        mins < 60 -> "最近${mins}分钟"
+        else -> "最近${mins / 60}小时"
     }
 }
