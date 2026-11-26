@@ -10,6 +10,10 @@
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Android 11+ 包可见性：读取其他应用的展示名（"微信"而非 com.tencent.mm）；
+         自用分发无商店审核约束 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
     <!-- M2 位置共享（默认精度模糊 ±1.1km，可切换；不留历史） -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
